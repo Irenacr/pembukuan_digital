@@ -27,4 +27,4 @@ RUN php artisan key:generate --force || true
 
 EXPOSE 8080
 
-CMD php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=8080
+CMD rm -f database/database.sqlite && touch database/database.sqlite && php artisan migrate:fresh --force && php artisan serve --host=0.0.0.0 --port=8080
