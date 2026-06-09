@@ -21,7 +21,6 @@ RUN composer install --no-dev --optimize-autoloader
 
 RUN pip3 install --break-system-packages --no-cache-dir -r requirements.txt
 
-RUN cp .env.example .env || true
 
 RUN php artisan key:generate --force || true
 
