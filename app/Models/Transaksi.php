@@ -8,6 +8,8 @@ class Transaksi extends Model
 {
     protected $fillable = [
     'customer_id',
+    'nama_barang',
+    'jumlah',
     'kategori',
     'total',
     'diskon_transaksi',

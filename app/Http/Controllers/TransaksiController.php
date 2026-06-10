@@ -426,8 +426,12 @@ PY;
 
         DB::beginTransaction();
         try {
-            $transaksi = Transaksi::create([
+           $transaksi = Transaksi::create([
                 'customer_id' => $validated['customer_id'],
+
+                'nama_barang' => 'MULTI ITEM',
+                'jumlah' => $totalJumlah,
+
                 'kategori' => $validated['kategori'],
                 'total' => $total,
                 'diskon_transaksi' => $diskon,
@@ -533,6 +537,8 @@ PY;
         $diskon = $validated['diskon_transaksi'] ?? 0;
         $total -= $diskon;
 
+        $totalJumlah = array_sum($jumlahs);
+    
         DB::beginTransaction();
         try {
             // Kembalikan stok dari detail transaksi lama sebelum validasi stok baru
