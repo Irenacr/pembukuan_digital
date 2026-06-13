@@ -411,6 +411,8 @@ PY;
         $diskon = $validated['diskon_transaksi'] ?? 0;
         $total -= $diskon;
 
+        $totalJumlah = array_sum($jumlahs);
+
         $notaScanPath = null;
         $notaText = null;
         if ($request->hasFile('nota_scan')) {
