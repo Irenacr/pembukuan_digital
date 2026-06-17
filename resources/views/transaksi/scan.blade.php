@@ -172,12 +172,12 @@ btn.addEventListener('click', async () => {
 
     let response;
 
-        try {
+    try {
 
-        console.log('{{ route('transaksi.scan.process') }}');
+        console.log('{{ route("transaksi.scan.process") }}');
 
         response = await fetch(
-            '{{ route('transaksi.scan.process') }}',
+            '{{ route("transaksi.scan.process") }}',
             {
                 method: 'POST',
                 credentials: 'same-origin',
@@ -191,7 +191,7 @@ btn.addEventListener('click', async () => {
             }
         );
 
-    } catch (err) {
+} catch (err) {
 
         console.error(err);
 
