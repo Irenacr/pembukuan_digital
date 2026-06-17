@@ -172,7 +172,9 @@ btn.addEventListener('click', async () => {
 
     let response;
 
-    try {
+        try {
+
+        console.log('{{ route('transaksi.scan.process') }}');
 
         response = await fetch(
             '{{ route('transaksi.scan.process') }}',
