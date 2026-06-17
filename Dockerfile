@@ -7,7 +7,9 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     libzip-dev \
     zip \
-    curl
+    curl \
+    libgl1 \
+    libglib2.0-0
 
 RUN docker-php-ext-install pdo pdo_mysql zip
 
