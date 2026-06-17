@@ -242,7 +242,7 @@ PY;
             }
         }
 
-        return 'python';
+        return env('PYTHON_BINARY', 'python3');
     }
 
     private function parseYoloDetections(array $detections): array
