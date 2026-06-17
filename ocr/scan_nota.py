@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 def ensure_home_environment():
+    print("STEP 1 - ENV READY", file=sys.stderr, flush=True)
     if os.name == 'nt':
         home = os.environ.get('HOME') or os.environ.get('USERPROFILE')
         if not home and os.environ.get('HOMEDRIVE') and os.environ.get('HOMEPATH'):
@@ -61,16 +62,19 @@ def debug_import_error(exc):
 
 try:
     import cv2
+    print("STEP 3 - CV2 OK", file=sys.stderr, flush=True)
 except Exception as exc:
     debug_import_error(exc)
 
 try:
     from ultralytics import YOLO
+    print("STEP 4 - YOLO IMPORT OK", file=sys.stderr, flush=True)
 except Exception as exc:
     debug_import_error(exc)
 
 try:
     from rapidocr_onnxruntime import RapidOCR
+    print("STEP 5 - RAPIDOCR IMPORT OK", file=sys.stderr, flush=True)
 except Exception as exc:
     debug_import_error(exc)
 
@@ -85,8 +89,13 @@ if not MODEL_PATH.exists():
         )
 
 #print(f'Using YOLO model: {MODEL_PATH}', file=sys.stderr)
+print("STEP 7 - CREATE RAPIDOCR", file=sys.stderr, flush=True)
 ocr = RapidOCR()
+print("STEP 8 - RAPIDOCR CREATED", file=sys.stderr, flush=True)
+
+print("STEP 9 - LOAD YOLO", file=sys.stderr, flush=True)
 model = YOLO(str(MODEL_PATH))
+print("STEP 10 - YOLO LOADED", file=sys.stderr, flush=True)
 
 
 def load_image(image_path):
@@ -128,11 +137,25 @@ def ocr_image(image):
         return lines
 
 def infer(image_path):
+
+    print("STEP 11 - ENTER INFER", file=sys.stderr, flush=True)
+
     image = load_image(image_path)
+
+    print(
+        f"STEP 12 - IMAGE SHAPE = {image.shape}",
+        file=sys.stderr,
+        flush=True
+    )
+
+    print("STEP 13 - BEFORE YOLO PREDICT", file=sys.stderr, flush=True)
+
     results = model(
-    str(image_path),
-    verbose=False
-)
+        str(image_path),
+        verbose=False
+    )
+
+    print("STEP 14 - AFTER YOLO PREDICT", file=sys.stderr, flush=True)
 
     output = {
         'raw_text': None,
