@@ -34,15 +34,6 @@ print("LOCALAPPDATA=" + os.environ.get('LOCALAPPDATA', ''), file=sys.stderr)
 try:
     import torch
     print("TORCH OK", file=sys.stderr)
-    print("STEP 1", file=sys.stderr)
-
-    print("BEFORE RAPIDOCR", file=sys.stderr)
-    ocr = RapidOCR()
-    print("AFTER RAPIDOCR", file=sys.stderr)
-
-    print("BEFORE YOLO", file=sys.stderr)
-    model = YOLO(str(MODEL_PATH))
-    print("AFTER YOLO", file=sys.stderr)
 except Exception as e:
     print("TORCH ERROR = " + str(e), file=sys.stderr)
     raise
