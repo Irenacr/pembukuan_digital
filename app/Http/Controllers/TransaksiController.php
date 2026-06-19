@@ -258,7 +258,13 @@ PY;
 
         if (!$response->successful()) {
             $message = $response->json('detail') ?: $response->body();
-            if (in_array($response->status(), [502, 503, 504], true)) {
+            if ($response->status() === 429) {
+                $message = 'OCR service sedang memproses nota lain. Tunggu beberapa detik lalu coba lagi.';
+            } elseif ($response->status() === 504) {
+                $message = 'OCR service melewati batas waktu pemrosesan. Coba ulangi dengan foto lebih kecil, lebih lurus, dan lebih jelas.';
+            } elseif ($response->status() === 503) {
+                $message = 'OCR service kehabisan memori. Turunkan ukuran foto scan atau naikkan memory OCR service di Railway.';
+            } elseif ($response->status() === 502) {
                 $message = 'OCR service tidak merespons tepat waktu. Coba ulangi dengan foto lebih kecil/jelas, atau naikkan memory OCR service di Railway.';
             }
 

@@ -1,4 +1,5 @@
 import json
+import gc
 import os
 import sys
 import tempfile
@@ -42,6 +43,16 @@ ocr = None
 model = None
 runtime_ready = False
 models_lock = threading.Lock()
+scan_lock = threading.Lock()
+
+
+def env_bool(name, default=False):
+    value = os.environ.get(name)
+
+    if value is None:
+        return default
+
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
 def debug_import_error(exc):
@@ -101,16 +112,16 @@ def ensure_runtime_modules():
     runtime_ready = True
 
 
-def ensure_models_loaded():
-    global ocr, model
+def ensure_yolo_loaded():
+    global model
 
-    if ocr is not None and model is not None:
+    if model is not None:
         return
 
     with models_lock:
         ensure_runtime_modules()
 
-        if ocr is not None and model is not None:
+        if model is not None:
             return
 
         try:
@@ -118,6 +129,23 @@ def ensure_models_loaded():
             print("STEP 4 - YOLO IMPORT OK", file=sys.stderr, flush=True)
         except Exception as exc:
             debug_import_error(exc)
+
+        print("STEP 9 - LOAD YOLO", file=sys.stderr, flush=True)
+        model = YOLO(str(MODEL_PATH))
+        print("STEP 10 - YOLO LOADED", file=sys.stderr, flush=True)
+
+
+def ensure_ocr_loaded():
+    global ocr
+
+    if ocr is not None:
+        return
+
+    with models_lock:
+        ensure_runtime_modules()
+
+        if ocr is not None:
+            return
 
         try:
             from rapidocr_onnxruntime import RapidOCR
@@ -129,9 +157,32 @@ def ensure_models_loaded():
         ocr = RapidOCR()
         print("STEP 8 - RAPIDOCR CREATED", file=sys.stderr, flush=True)
 
-        print("STEP 9 - LOAD YOLO", file=sys.stderr, flush=True)
-        model = YOLO(str(MODEL_PATH))
-        print("STEP 10 - YOLO LOADED", file=sys.stderr, flush=True)
+
+def ensure_models_loaded():
+    ensure_runtime_modules()
+
+    if env_bool("OCR_LOW_MEMORY_MODE", True):
+        print("STEP 6 - LOW MEMORY MODE, SKIP PERSISTENT MODEL WARMUP", file=sys.stderr, flush=True)
+        return
+
+    ensure_yolo_loaded()
+    ensure_ocr_loaded()
+
+
+def release_yolo_model():
+    global model
+
+    if model is not None:
+        model = None
+        gc.collect()
+
+
+def release_ocr_engine():
+    global ocr
+
+    if ocr is not None:
+        ocr = None
+        gc.collect()
 
 
 def load_image(image_path):
@@ -148,7 +199,7 @@ def load_image(image_path):
 
 
 def ocr_crop_image(crop_image):
-    ensure_models_loaded()
+    ensure_ocr_loaded()
 
     with tempfile.TemporaryDirectory() as tmpdir:
 
@@ -220,7 +271,22 @@ def suppress_overlapping_boxes(boxes, iou_threshold):
 
 
 def infer(image_path):
-    ensure_models_loaded()
+    if not scan_lock.acquire(blocking=False):
+        raise RuntimeError('OCR service sedang memproses nota lain. Coba ulangi beberapa detik lagi.')
+
+    try:
+        return _infer_locked(image_path)
+    finally:
+        if env_bool("OCR_LOW_MEMORY_MODE", True):
+            release_yolo_model()
+            if env_bool("OCR_RELEASE_OCR_AFTER_SCAN", True):
+                release_ocr_engine()
+        scan_lock.release()
+
+
+def _infer_locked(image_path):
+    ensure_runtime_modules()
+    low_memory_mode = env_bool("OCR_LOW_MEMORY_MODE", True)
 
     print("STEP 11 - ENTER INFER", file=sys.stderr, flush=True)
 
@@ -234,12 +300,19 @@ def infer(image_path):
 
     print("STEP 13 - BEFORE YOLO PREDICT", file=sys.stderr, flush=True)
 
-    results = model(
+    if low_memory_mode:
+        from ultralytics import YOLO
+        yolo_model = YOLO(str(MODEL_PATH))
+    else:
+        ensure_yolo_loaded()
+        yolo_model = model
+
+    results = yolo_model(
         str(image_path),
         verbose=False,
-        imgsz=int(os.environ.get("OCR_YOLO_IMGSZ", "512")),
+        imgsz=int(os.environ.get("OCR_YOLO_IMGSZ", "416")),
         conf=float(os.environ.get("OCR_YOLO_CONF", "0.25")),
-        max_det=int(os.environ.get("OCR_YOLO_MAX_DET", "16")),
+        max_det=int(os.environ.get("OCR_YOLO_MAX_DET", "10")),
         device=os.environ.get("OCR_YOLO_DEVICE", "cpu"),
     )
 
@@ -254,15 +327,19 @@ def infer(image_path):
     }
 
     result = results[0]
+    result_names = dict(result.names)
 
     # Jika tidak ada objek YOLO, jangan OCR seluruh nota.
     # Flow scan form hanya boleh memakai teks dari kotak YOLO.
     if result.boxes is None or len(result.boxes) == 0:
         output['raw_text'] = ''
         output['ocr_text'] = ''
+        if low_memory_mode:
+            del results, result, yolo_model
+            gc.collect()
         return output
 
-    default_ocr_item_classes = ",".join(result.names.values())
+    default_ocr_item_classes = ",".join(result_names.values())
     ocr_item_classes = {
         class_name.strip()
         for class_name in os.environ.get(
@@ -271,9 +348,9 @@ def infer(image_path):
         ).split(",")
         if class_name.strip()
     }
-    crop_max_det = max(1, int(os.environ.get("OCR_CROP_MAX_DET", "12")))
+    crop_max_det = max(1, int(os.environ.get("OCR_CROP_MAX_DET", "6")))
     min_crop_area = max(1, int(os.environ.get("OCR_MIN_CROP_AREA", "80")))
-    max_crop_pixels = max(min_crop_area, int(os.environ.get("OCR_MAX_CROP_PIXELS", "250000")))
+    max_crop_pixels = max(min_crop_area, int(os.environ.get("OCR_MAX_CROP_PIXELS", "120000")))
     box_iou_threshold = float(os.environ.get("OCR_BOX_IOU_THRESHOLD", "0.35"))
     crop_padding = max(0, int(os.environ.get("OCR_CROP_PADDING", "2")))
     candidate_boxes = []
@@ -298,7 +375,7 @@ def infer(image_path):
 
         class_id = int(box.cls[0])
 
-        class_name = result.names[class_id]
+        class_name = result_names[class_id]
 
         if class_name not in ocr_item_classes:
             continue
@@ -313,6 +390,11 @@ def infer(image_path):
         candidate_boxes,
         box_iou_threshold,
     )
+
+    if low_memory_mode:
+        del results, result, yolo_model
+        release_yolo_model()
+        gc.collect()
 
     candidate_boxes.sort(key=lambda item: (
         item['bbox'][1],
@@ -363,6 +445,9 @@ def infer(image_path):
             'text': text,
             'ocr_lines': lines,
         })
+
+    if env_bool("OCR_RELEASE_OCR_AFTER_SCAN", True):
+        release_ocr_engine()
 
     joined_text = '\n'.join([
         item['text']

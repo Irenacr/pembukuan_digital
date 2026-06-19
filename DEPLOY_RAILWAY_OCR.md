@@ -20,16 +20,24 @@ Dengan pola ini, Laravel tidak menjalankan `torch`, `ultralytics`, dan RapidOCR 
 4. Tambahkan environment variable jika perlu:
 
    ```text
-   OCR_MAX_IMAGE_DIM=960
-   OCR_YOLO_IMGSZ=512
+   MALLOC_ARENA_MAX=2
+   OMP_WAIT_POLICY=PASSIVE
+   YOLO_CONFIG_DIR=/tmp/ultralytics
+   OCR_LOW_MEMORY_MODE=true
+   OCR_RELEASE_OCR_AFTER_SCAN=true
+   OCR_WARMUP_ON_START=false
+   OCR_MAX_CONCURRENT_SCANS=1
+   OCR_MAX_IMAGE_DIM=736
+   OCR_YOLO_IMGSZ=416
    OCR_YOLO_CONF=0.25
-   OCR_YOLO_MAX_DET=16
-   OCR_CROP_MAX_DET=12
+   OCR_YOLO_MAX_DET=10
+   OCR_CROP_MAX_DET=6
    OCR_CROP_PADDING=2
    OCR_ITEM_CLASSES=banyak_barang_satuan,harga_satuan,harga_total_perbarang,nama_barang,total_value
    OCR_MIN_CROP_AREA=80
-   OCR_MAX_CROP_PIXELS=250000
-   OCR_MAX_UPLOAD_MB=6
+   OCR_MAX_CROP_PIXELS=120000
+   OCR_MAX_UPLOAD_MB=4
+   OCR_SCAN_TIMEOUT=90
    OCR_BOX_IOU_THRESHOLD=0.35
    OCR_YOLO_DEVICE=cpu
    OCR_TORCH_THREADS=1
@@ -47,6 +55,14 @@ Dengan pola ini, Laravel tidak menjalankan `torch`, `ultralytics`, dan RapidOCR 
    ```json
    {"ok":true}
    ```
+
+6. Cek readiness service:
+
+   ```text
+   https://URL-OCR-SERVICE/ready
+   ```
+
+   Pada low-memory mode, `ok` boleh `true` walaupun model belum dimuat karena model sengaja dimuat hanya saat scan.
 
 ## 2. Deploy Laravel Web Service
 
@@ -92,9 +108,11 @@ Dengan pola ini, Laravel tidak menjalankan `torch`, `ultralytics`, dan RapidOCR 
 
 - Jangan kosongkan `OCR_SERVICE_URL` di production.
 - Jangan set `APP_DEBUG=true` di production.
-- Jika OCR masih lambat, naikkan resource OCR service, bukan Laravel service.
+- Jika OCR masih OOM, naikkan memory OCR service atau turunkan `OCR_MAX_IMAGE_DIM`, `OCR_YOLO_IMGSZ`, `OCR_YOLO_MAX_DET`, dan `OCR_CROP_MAX_DET`.
 - Jika gambar nota dari HP terlalu besar, OCR service otomatis resize maksimal sesuai `OCR_MAX_IMAGE_DIM`.
 - RapidOCR hanya memproses crop dari bounding box YOLO, bukan seluruh gambar nota.
-- `/health` tidak memuat model OCR, jadi Railway healthcheck tetap ringan. Model YOLO/RapidOCR dimuat saat scan pertama.
+- `/health` tidak memuat model OCR, jadi Railway healthcheck tetap ringan.
+- `OCR_LOW_MEMORY_MODE=true` membuat YOLO dilepas sebelum RapidOCR mulai membaca crop.
+- `OCR_WARMUP_ON_START=false` penting untuk plan Railway kecil agar service tidak OOM saat baru start.
 - `OCR_HTTP_TIMEOUT` di Laravel harus lebih besar dari waktu scan normal, tetapi jangan terlalu tinggi agar user tidak menunggu tanpa kepastian.
 - Jika Railway memberi error `signal 9`, naikkan memory OCR service terlebih dahulu. Laravel service tidak perlu dinaikkan untuk masalah ini.

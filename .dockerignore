@@ -8,6 +8,7 @@ storage/framework/sessions/*
 storage/framework/views/*
 storage/app/public/temp_nota/*
 ocr/__pycache__
+ocr/best
 ocr_service/__pycache__
 *.pyc
 .env

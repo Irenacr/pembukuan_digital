@@ -1,15 +1,23 @@
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
-    OCR_MAX_IMAGE_DIM=960 \
-    OCR_YOLO_IMGSZ=512 \
+    MALLOC_ARENA_MAX=2 \
+    OMP_WAIT_POLICY=PASSIVE \
+    YOLO_CONFIG_DIR=/tmp/ultralytics \
+    OCR_LOW_MEMORY_MODE=true \
+    OCR_RELEASE_OCR_AFTER_SCAN=true \
+    OCR_WARMUP_ON_START=false \
+    OCR_MAX_CONCURRENT_SCANS=1 \
+    OCR_MAX_IMAGE_DIM=736 \
+    OCR_YOLO_IMGSZ=416 \
     OCR_YOLO_CONF=0.25 \
-    OCR_YOLO_MAX_DET=16 \
-    OCR_CROP_MAX_DET=12 \
+    OCR_YOLO_MAX_DET=10 \
+    OCR_CROP_MAX_DET=6 \
     OCR_CROP_PADDING=2 \
     OCR_MIN_CROP_AREA=80 \
-    OCR_MAX_CROP_PIXELS=250000 \
-    OCR_MAX_UPLOAD_MB=6 \
+    OCR_MAX_CROP_PIXELS=120000 \
+    OCR_MAX_UPLOAD_MB=4 \
+    OCR_SCAN_TIMEOUT=90 \
     OCR_BOX_IOU_THRESHOLD=0.35 \
     OCR_ITEM_CLASSES=banyak_barang_satuan,harga_satuan,harga_total_perbarang,nama_barang,total_value \
     OCR_YOLO_DEVICE=cpu \
@@ -26,7 +34,9 @@ WORKDIR /app
 COPY ocr_service/requirements.txt /app/ocr_service/requirements.txt
 RUN pip install --no-cache-dir -r /app/ocr_service/requirements.txt
 
-COPY ocr /app/ocr
+RUN mkdir -p /app/ocr
+COPY ocr/*.py /app/ocr/
+COPY ocr/*.pt /app/ocr/
 COPY ocr_service /app/ocr_service
 
 EXPOSE 8080
