@@ -12,16 +12,10 @@
             <form action="/pembelian" method="POST">
                 @csrf
 
-                <!-- PILIH BARANG -->
+                <!-- NAMA BARANG -->
                 <div class="mb-3">
-                    <label class="form-label">Barang</label>
-                    <select name="barang_id" class="form-select">
-                        @foreach($barangs as $barang)
-                            <option value="{{ $barang->id }}">
-                                {{ $barang->nama_barang }}
-                            </option>
-                        @endforeach
-                    </select>
+                    <label class="form-label">Nama Barang</label>
+                    <input type="text" name="nama_barang" class="form-control" value="{{ old('nama_barang') }}" required>
                 </div>
 
                 <!-- JUMLAH -->

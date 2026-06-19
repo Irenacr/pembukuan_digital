@@ -322,6 +322,7 @@ def _infer_locked(image_path):
         'raw_text': None,
         'ocr_text': None,
         'ocr_scope': 'yolo_crops_only',
+        'pipeline': ['image', 'yolo', 'crop_per_class', 'rapidocr', 'json'],
         'detections': [],
         'items': [],
     }

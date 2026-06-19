@@ -72,8 +72,7 @@
         <table class="table table-bordered" id="items-table">
             <thead class="table-light text-center">
                 <tr>
-                    <th>Barang</th>
-                    <th>Nama Hasil Scan</th>
+                    <th>Nama Barang</th>
                     <th>Harga Jual</th>
                     <th>Jumlah</th>
                     <th>Total OCR</th>
@@ -85,6 +84,11 @@
                 {{-- rows akan ditambahkan oleh JavaScript --}}
             </tbody>
         </table>
+        <datalist id="barang-options">
+            @foreach($barangs as $barang)
+                <option value="{{ $barang->nama_barang }}"></option>
+            @endforeach
+        </datalist>
         <button type="button" id="add-item" class="btn btn-secondary">Tambah Barang</button>
     </div>
 </div>
@@ -179,14 +183,6 @@
         return 'Rp ' + Number(value).toLocaleString('id-ID');
     }
 
-    function buildOptions(selectedId = '') {
-        let options = '<option value="">-- Pilih Barang --</option>';
-        barangItems.forEach(item => {
-            options += `<option value="${item.id}" data-harga="${item.harga}" ${item.id == selectedId ? 'selected' : ''}>${item.name}</option>`;
-        });
-        return options;
-    }
-
     function escapeHtml(value) {
         return String(value ?? '')
             .replace(/&/g, '&amp;')
@@ -227,6 +223,16 @@
         return partial ? partial.id : '';
     }
 
+    function findExactBarang(name) {
+        const normalizedName = normalizeText(name);
+
+        if (!normalizedName) {
+            return null;
+        }
+
+        return barangItems.find(item => normalizeText(item.name) === normalizedName) || null;
+    }
+
     function calculateSubtotal(row) {
         const harga = Number(row.querySelector('.harga-jual').value || 0);
         const jumlah = Number(row.querySelector('.jumlah-item').value || 0);
@@ -250,18 +256,14 @@
     function createRow(data = {}) {
         const row = document.createElement('tr');
         const matchedBarangId = data.barang_id || findMatchingBarangId(data.item_name);
-        const itemName = data.item_name ?? '';
+        const matchedBarang = barangItems.find(item => item.id == matchedBarangId);
+        const itemName = data.item_name || matchedBarang?.name || '';
         const ocrTotal = Number(data.ocr_total || 0);
 
         row.innerHTML = `
             <td>
-                <select name="barang_id[]" class="form-select item-barang" required>
-                    ${buildOptions(matchedBarangId)}
-                </select>
-                ${itemName && !matchedBarangId ? `<small class="text-danger">Pilih barang yang cocok dari hasil scan.</small>` : ''}
-            </td>
-            <td>
-                <input type="text" name="item_name[]" class="form-control item-name" value="${escapeHtml(itemName)}" placeholder="Nama hasil scan">
+                <input type="hidden" name="barang_id[]" class="item-barang-id" value="${escapeHtml(matchedBarangId)}">
+                <input type="text" name="item_name[]" class="form-control item-name" list="barang-options" value="${escapeHtml(itemName)}" placeholder="Pilih atau ketik nama barang" required>
             </td>
             <td>
                 <input type="number" name="harga_jual[]" class="form-control harga-jual" min="0" value="${data.harga_jual ?? ''}" required>
@@ -276,26 +278,23 @@
             </td>
         `;
 
-        const barangSelect = row.querySelector('.item-barang');
+        const barangIdInput = row.querySelector('.item-barang-id');
         const itemNameInput = row.querySelector('.item-name');
         const hargaInput = row.querySelector('.harga-jual');
         const jumlahInput = row.querySelector('.jumlah-item');
         const removeButton = row.querySelector('.btn-remove-row');
 
-        barangSelect.addEventListener('change', event => {
-            const selected = barangItems.find(item => item.id == event.target.value);
-            if (selected) {
-                hargaInput.value = selected.harga;
-            }
-            calculateSubtotal(row);
-        });
         itemNameInput.addEventListener('input', event => {
-            if (!barangSelect.value) {
-                const matchedId = findMatchingBarangId(event.target.value);
-                if (matchedId) {
-                    barangSelect.value = matchedId;
+            const selected = findExactBarang(event.target.value);
+            barangIdInput.value = selected ? selected.id : '';
+
+            if (selected) {
+                if (!hargaInput.value || Number(hargaInput.value) === 0) {
+                    hargaInput.value = selected.harga;
                 }
             }
+
+            calculateSubtotal(row);
         });
         hargaInput.addEventListener('input', () => calculateSubtotal(row));
         jumlahInput.addEventListener('input', () => calculateSubtotal(row));

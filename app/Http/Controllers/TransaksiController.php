@@ -618,6 +618,37 @@ PY;
         return $items;
     }
 
+    private function resolveBarangForFormItem(?string $barangId, ?string $itemName, string $kategori, int $harga, int $qty): Barang
+    {
+        $itemName = trim((string) $itemName);
+
+        if ($barangId) {
+            $barang = Barang::find($barangId);
+
+            if ($barang) {
+                return $barang;
+            }
+        }
+
+        if ($itemName === '') {
+            throw new \RuntimeException('Nama barang wajib diisi.');
+        }
+
+        $barang = Barang::whereRaw('LOWER(nama_barang) = ?', [strtolower($itemName)])->first();
+
+        if ($barang) {
+            return $barang;
+        }
+
+        return Barang::create([
+            'tanggal' => now()->toDateString(),
+            'nama_barang' => $itemName,
+            'kategori' => $kategori,
+            'stok' => $qty,
+            'harga' => $harga,
+        ]);
+    }
+
     /**
      * Simpan transaksi
      */
@@ -632,8 +663,10 @@ PY;
             'diskon_transaksi' => 'nullable|numeric|min:0',
             'lokasi_pengiriman' => 'required',
             'nama_penerima' => 'required',
-            'barang_id' => 'required|array|min:1',
-            'barang_id.*' => 'required|integer|exists:barangs,id',
+            'barang_id' => 'nullable|array',
+            'barang_id.*' => 'nullable|integer|exists:barangs,id',
+            'item_name' => 'required|array|min:1',
+            'item_name.*' => 'required|string|max:255',
             'harga_jual' => 'required|array|min:1',
             'harga_jual.*' => 'required|numeric|min:0',
             'jumlah' => 'required|array|min:1',
@@ -641,27 +674,26 @@ PY;
             'nota_scan' => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
         ]);
 
-        $barangIds = $validated['barang_id'];
+        $barangIds = $validated['barang_id'] ?? [];
+        $itemNames = $validated['item_name'];
         $hargaJuals = $validated['harga_jual'];
         $jumlahs = $validated['jumlah'];
 
-        if (count($barangIds) !== count($hargaJuals) || count($barangIds) !== count($jumlahs)) {
+        if (count($itemNames) !== count($hargaJuals) || count($itemNames) !== count($jumlahs)) {
             return back()->with('error', 'Format input barang tidak valid');
         }
-
-        $barangs = Barang::whereIn('id', $barangIds)->get()->keyBy('id');
 
         $stockNeeded = [];
         $items = [];
         $total = 0;
+        $barangs = collect();
 
-        foreach ($barangIds as $index => $barangId) {
-            $qty = $jumlahs[$index];
-            $hargaJual = $hargaJuals[$index];
-
-            if (!isset($barangs[$barangId])) {
-                return back()->with('error', 'Barang tidak ditemukan pada daftar');
-            }
+        foreach ($itemNames as $index => $itemName) {
+            $qty = (int) $jumlahs[$index];
+            $hargaJual = (int) $hargaJuals[$index];
+            $barang = $this->resolveBarangForFormItem($barangIds[$index] ?? null, $itemName, $validated['kategori'], $hargaJual, $qty);
+            $barangId = $barang->id;
+            $barangs[$barangId] = $barang;
 
             $stockNeeded[$barangId] = ($stockNeeded[$barangId] ?? 0) + $qty;
 
@@ -768,8 +800,10 @@ PY;
             'diskon_transaksi' => 'nullable|numeric|min:0',
             'lokasi_pengiriman' => 'required',
             'nama_penerima' => 'required',
-            'barang_id' => 'required|array|min:1',
-            'barang_id.*' => 'required|integer|exists:barangs,id',
+            'barang_id' => 'nullable|array',
+            'barang_id.*' => 'nullable|integer|exists:barangs,id',
+            'item_name' => 'required|array|min:1',
+            'item_name.*' => 'required|string|max:255',
             'harga_jual' => 'required|array|min:1',
             'harga_jual.*' => 'required|numeric|min:0',
             'jumlah' => 'required|array|min:1',
@@ -777,26 +811,26 @@ PY;
             'nota_scan' => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
         ]);
 
-        $barangIds = $validated['barang_id'];
+        $barangIds = $validated['barang_id'] ?? [];
+        $itemNames = $validated['item_name'];
         $hargaJuals = $validated['harga_jual'];
         $jumlahs = $validated['jumlah'];
 
-        if (count($barangIds) !== count($hargaJuals) || count($barangIds) !== count($jumlahs)) {
+        if (count($itemNames) !== count($hargaJuals) || count($itemNames) !== count($jumlahs)) {
             return back()->with('error', 'Format input barang tidak valid');
         }
 
-        $barangs = Barang::whereIn('id', $barangIds)->get()->keyBy('id');
         $stockNeeded = [];
         $items = [];
         $total = 0;
+        $barangs = collect();
 
-        foreach ($barangIds as $index => $barangId) {
-            $qty = $jumlahs[$index];
-            $hargaJual = $hargaJuals[$index];
-
-            if (!isset($barangs[$barangId])) {
-                return back()->with('error', 'Barang tidak ditemukan pada daftar');
-            }
+        foreach ($itemNames as $index => $itemName) {
+            $qty = (int) $jumlahs[$index];
+            $hargaJual = (int) $hargaJuals[$index];
+            $barang = $this->resolveBarangForFormItem($barangIds[$index] ?? null, $itemName, $validated['kategori'], $hargaJual, $qty);
+            $barangId = $barang->id;
+            $barangs[$barangId] = $barang;
 
             $stockNeeded[$barangId] = ($stockNeeded[$barangId] ?? 0) + $qty;
             $subtotal = $hargaJual * $qty;

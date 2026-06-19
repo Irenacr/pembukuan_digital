@@ -27,18 +27,30 @@ class PembelianController extends Controller
     {
         // VALIDASI
         $validated = $request->validate([
-            'barang_id' => 'required',
+            'nama_barang' => 'required|string|max:255',
             'jumlah' => 'required|numeric|min:1',
             'harga_beli' => 'required|numeric|min:0',
             'tanggal' => 'required|date_format:Y-m-d'
         ]);
+
+        $barang = Barang::whereRaw('LOWER(nama_barang) = ?', [strtolower(trim($validated['nama_barang']))])->first();
+
+        if (!$barang) {
+            $barang = Barang::create([
+                'tanggal' => $validated['tanggal'],
+                'nama_barang' => trim($validated['nama_barang']),
+                'kategori' => null,
+                'stok' => 0,
+                'harga' => $validated['harga_beli'],
+            ]);
+        }
 
         // HITUNG TOTAL
         $total = $validated['jumlah'] * $validated['harga_beli'];
 
         // SIMPAN
         Pembelian::create([
-            'barang_id' => $validated['barang_id'],
+            'barang_id' => $barang->id,
             'jumlah' => $validated['jumlah'],
             'harga_beli' => $validated['harga_beli'],
             'total' => $total,
@@ -46,11 +58,9 @@ class PembelianController extends Controller
         ]);
 
         //  TAMBAH STOK OTOMATIS
-        $barang = Barang::find($validated['barang_id']);
-        if ($barang) {
-            $barang->stok += $validated['jumlah'];
-            $barang->save();
-        }
+        $barang->stok += $validated['jumlah'];
+        $barang->harga = $validated['harga_beli'];
+        $barang->save();
 
         return redirect('/pembelian')->with('success', 'Pembelian berhasil ditambahkan');
     }
