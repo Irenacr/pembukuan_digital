@@ -200,6 +200,12 @@ def infer(image_path):
         if crop.size == 0:
             continue
 
+        print(
+            f"STEP 15 - OCR CLASS {class_name}",
+            file=sys.stderr,
+            flush=True
+        )
+
         lines = ocr_image(crop)
 
         text = '\n'.join([
@@ -224,6 +230,12 @@ def infer(image_path):
     ])
 
     if not joined_text:
+
+        print(
+            "STEP 16 - FULL IMAGE OCR",
+            file=sys.stderr,
+            flush=True
+        )
 
         lines = ocr_image(image)
 
