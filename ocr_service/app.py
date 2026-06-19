@@ -12,7 +12,7 @@ app = FastAPI(title="Pembukuan OCR Service")
 
 
 def resize_for_ocr(source_path: str) -> str:
-    max_dim = int(os.getenv("OCR_MAX_IMAGE_DIM", "1600"))
+    max_dim = int(os.getenv("OCR_MAX_IMAGE_DIM", "960"))
     image = cv2.imread(source_path)
 
     if image is None:

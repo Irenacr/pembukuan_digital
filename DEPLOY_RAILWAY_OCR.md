@@ -20,10 +20,10 @@ Dengan pola ini, Laravel tidak menjalankan `torch`, `ultralytics`, dan RapidOCR 
 4. Tambahkan environment variable jika perlu:
 
    ```text
-   OCR_MAX_IMAGE_DIM=1600
-   OCR_YOLO_IMGSZ=960
+   OCR_MAX_IMAGE_DIM=960
+   OCR_YOLO_IMGSZ=640
    OCR_YOLO_CONF=0.25
-   OCR_YOLO_MAX_DET=40
+   OCR_YOLO_MAX_DET=20
    OCR_YOLO_DEVICE=cpu
    OCR_TORCH_THREADS=1
    OCR_CV2_THREADS=1

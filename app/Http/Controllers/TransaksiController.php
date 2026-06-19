@@ -250,6 +250,10 @@ PY;
 
         if (!$response->successful()) {
             $message = $response->json('detail') ?: $response->body();
+            if ($response->status() === 502) {
+                $message = 'OCR service tidak merespons tepat waktu. Coba ulangi dengan foto lebih kecil/jelas, atau naikkan memory OCR service di Railway.';
+            }
+
             throw new \RuntimeException('OCR service gagal: ' . $message);
         }
 

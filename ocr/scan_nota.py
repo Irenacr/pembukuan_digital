@@ -160,9 +160,9 @@ def infer(image_path):
     results = model(
         str(image_path),
         verbose=False,
-        imgsz=int(os.environ.get("OCR_YOLO_IMGSZ", "960")),
+        imgsz=int(os.environ.get("OCR_YOLO_IMGSZ", "640")),
         conf=float(os.environ.get("OCR_YOLO_CONF", "0.25")),
-        max_det=int(os.environ.get("OCR_YOLO_MAX_DET", "40")),
+        max_det=int(os.environ.get("OCR_YOLO_MAX_DET", "20")),
         device=os.environ.get("OCR_YOLO_DEVICE", "cpu"),
     )
 
