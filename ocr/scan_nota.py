@@ -162,7 +162,7 @@ def infer(image_path):
         verbose=False,
         imgsz=int(os.environ.get("OCR_YOLO_IMGSZ", "512")),
         conf=float(os.environ.get("OCR_YOLO_CONF", "0.25")),
-        max_det=int(os.environ.get("OCR_YOLO_MAX_DET", "16")),
+        max_det=int(os.environ.get("OCR_YOLO_MAX_DET", "24")),
         device=os.environ.get("OCR_YOLO_DEVICE", "cpu"),
     )
 
@@ -191,12 +191,7 @@ def infer(image_path):
 
         return output
 
-    relevant_classes = {
-        'banyak_barang_satuan',
-        'nama_barang',
-        'harga_satuan',
-    }
-    crop_max_det = int(os.environ.get("OCR_CROP_MAX_DET", "12"))
+    crop_max_det = int(os.environ.get("OCR_CROP_MAX_DET", "20"))
     min_crop_area = int(os.environ.get("OCR_MIN_CROP_AREA", "80"))
     candidate_boxes = []
 
@@ -212,9 +207,6 @@ def infer(image_path):
         class_id = int(box.cls[0])
 
         class_name = result.names[class_id]
-
-        if class_name not in relevant_classes:
-            continue
 
         candidate_boxes.append({
             'bbox': [x1, y1, x2, y2],

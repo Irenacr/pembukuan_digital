@@ -38,8 +38,9 @@ class TransaksiController extends Controller
         $scanData = session()->pull('transaksi_scan', []);
         $scanItems = $scanData['items'] ?? [];
         $scanText = $scanData['ocr_text'] ?? null;
+        $scanSummary = $scanData['summary'] ?? [];
 
-        return view('transaksi.create', compact('customers','barangs','scanItems','scanText'));
+        return view('transaksi.create', compact('customers','barangs','scanItems','scanText','scanSummary'));
     }
 
     public function scanForm()
@@ -69,11 +70,13 @@ class TransaksiController extends Controller
             $ocrText = $result['ocr_text'] ?? $result['raw_text'] ?? null;
             $detectedItems = $result['items'] ?? [];
             $parsedItems = [];
+            $scanSummary = [];
 
 if (!empty($result['detections'])) {
 
     $parsedItems = $this->parseYoloDetections(
-        $result['detections']
+        $result['detections'],
+        $scanSummary
     );
 
 } else {
@@ -90,6 +93,7 @@ if (!empty($result['detections'])) {
             session(['transaksi_scan' => [
                 'ocr_text' => $ocrText,
                 'items' => $parsedItems,
+                'summary' => $scanSummary,
             ]]);
         } catch (\Exception $e) {
             Log::error('Scan nota process error: ' . $e->getMessage(), ['exception' => $e]);
@@ -294,68 +298,184 @@ PY;
         return env('PYTHON_BINARY', 'python3');
     }
 
-    private function parseYoloDetections(array $detections): array
-{
-    usort($detections, function ($a, $b) {
-        $ay = $a['bbox'][1] ?? 0;
-        $by = $b['bbox'][1] ?? 0;
+    private function parseYoloDetections(array $detections, ?array &$summary = null): array
+    {
+        $summary = [];
+        $rows = [];
 
-        if (abs($ay - $by) > 12) {
-            return $ay <=> $by;
+        foreach ($detections as $d) {
+            $text = trim(preg_replace('/\s+/', ' ', (string) ($d['text'] ?? '')));
+            $bbox = $d['bbox'] ?? [];
+
+            if ($text === '' || count($bbox) < 4 || $this->isOcrHeaderText($text)) {
+                continue;
+            }
+
+            $class = $this->mapYoloClassToItemField((string) ($d['class_name'] ?? ''));
+
+            if ($class === null) {
+                continue;
+            }
+
+            $x1 = (float) ($bbox[0] ?? 0);
+            $y1 = (float) ($bbox[1] ?? 0);
+            $x2 = (float) ($bbox[2] ?? $x1);
+            $y2 = (float) ($bbox[3] ?? $y1);
+            $centerY = ($y1 + $y2) / 2;
+            $height = max($y2 - $y1, 1);
+            $matchedIndex = null;
+
+            foreach ($rows as $index => $row) {
+                $tolerance = max(14, min(40, (($row['height'] + $height) / 2) * 0.7));
+
+                if (abs($row['center_y'] - $centerY) <= $tolerance) {
+                    $matchedIndex = $index;
+                    break;
+                }
+            }
+
+            if ($matchedIndex === null) {
+                $rows[] = [
+                    'center_y' => $centerY,
+                    'height' => $height,
+                    'cells' => [],
+                ];
+                $matchedIndex = array_key_last($rows);
+            }
+
+            $rows[$matchedIndex]['center_y'] = ($rows[$matchedIndex]['center_y'] + $centerY) / 2;
+            $rows[$matchedIndex]['height'] = max($rows[$matchedIndex]['height'], $height);
+            $rows[$matchedIndex]['cells'][] = [
+                'field' => $class,
+                'text' => $text,
+                'x' => $x1,
+            ];
         }
 
-        return ($a['bbox'][0] ?? 0) <=> ($b['bbox'][0] ?? 0);
-    });
+        usort($rows, fn ($a, $b) => $a['center_y'] <=> $b['center_y']);
 
-    $qtys = [];
-    $names = [];
-    $prices = [];
+        $items = [];
 
-    foreach ($detections as $d) {
+        foreach ($rows as $row) {
+            usort($row['cells'], fn ($a, $b) => $a['x'] <=> $b['x']);
 
-        $class = $d['class_name'] ?? '';
-        $text = trim($d['text'] ?? '');
+            $item = [
+                'barang_id' => '',
+                'item_name' => '',
+                'jumlah' => 1,
+                'harga_jual' => 0,
+                'ocr_total' => 0,
+            ];
 
-        if (!$text) {
-            continue;
+            foreach ($row['cells'] as $cell) {
+                if ($cell['field'] === 'item_name') {
+                    $item['item_name'] = trim($item['item_name'] . ' ' . $cell['text']);
+                    continue;
+                }
+
+                if ($cell['field'] === 'jumlah') {
+                    $qty = $this->parseOcrNumber($cell['text']);
+                    $item['jumlah'] = max($qty, 1);
+                    continue;
+                }
+
+                if ($cell['field'] === 'harga_jual') {
+                    $item['harga_jual'] = $this->parseOcrNumber($cell['text']);
+                    continue;
+                }
+
+                if ($cell['field'] === 'ocr_total') {
+                    $item['ocr_total'] = $this->parseOcrNumber($cell['text']);
+                    continue;
+                }
+
+                if ($cell['field'] === 'receipt_total') {
+                    $summary['receipt_total'] = $this->parseOcrNumber($cell['text']);
+                }
+            }
+
+            $item['item_name'] = trim(preg_replace('/\s+/', ' ', $item['item_name']));
+
+            if ($item['item_name'] === '' && $item['harga_jual'] <= 0 && $item['ocr_total'] <= 0) {
+                continue;
+            }
+
+            $items[] = $item;
         }
 
-        switch ($class) {
-
-            case 'banyak_barang_satuan':
-                $qtys[] = preg_replace('/\D/', '', $text);
-                break;
-
-            case 'nama_barang':
-                $names[] = preg_replace('/\s+/', ' ', $text);
-                break;
-
-            case 'harga_satuan':
-                $prices[] = preg_replace('/\D/', '', $text);
-                break;
-        }
+        return $items;
     }
 
-    $items = [];
+    private function mapYoloClassToItemField(string $className): ?string
+    {
+        $className = strtolower(trim($className));
+        $className = str_replace(['-', ' '], '_', $className);
 
-    $count = max(
-        count($names),
-        count($qtys),
-        count($prices)
-    );
+        if ($className === 'total_value') {
+            return 'receipt_total';
+        }
 
-    for ($i = 0; $i < $count; $i++) {
+        if ($className === 'harga_total_perbarang') {
+            return 'ocr_total';
+        }
 
-        $items[] = [
-            'barang_id' => '',
-            'item_name' => $names[$i] ?? '',
-            'jumlah' => max((int)($qtys[$i] ?? 1), 1),
-            'harga_jual' => (int)($prices[$i] ?? 0),
-        ];
+        if ($className === 'banyak_barang_satuan') {
+            return 'jumlah';
+        }
+
+        if ($className === 'harga_satuan') {
+            return 'harga_jual';
+        }
+
+        if ($className === 'nama_barang') {
+            return 'item_name';
+        }
+
+        if (str_contains($className, 'banyak') || str_contains($className, 'qty') || str_contains($className, 'kuantitas')) {
+            return 'jumlah';
+        }
+
+        if (str_contains($className, 'harga') && !str_contains($className, 'total') && !str_contains($className, 'jumlah')) {
+            return 'harga_jual';
+        }
+
+        if (str_contains($className, 'total') || str_contains($className, 'subtotal') || str_contains($className, 'jumlah')) {
+            return 'ocr_total';
+        }
+
+        if (str_contains($className, 'nama') || str_contains($className, 'barang') || str_contains($className, 'item')) {
+            return 'item_name';
+        }
+
+        return null;
     }
 
-    return $items;
-}
+    private function parseOcrNumber(string $text): int
+    {
+        $text = trim($text);
+        $text = preg_replace('/([.,])\s*0{2}$/', '', $text);
+        $number = preg_replace('/\D/', '', $text);
+
+        return $number === '' ? 0 : (int) $number;
+    }
+
+    private function isOcrHeaderText(string $text): bool
+    {
+        $normalized = strtolower(trim(preg_replace('/[^a-zA-Z\s]/', ' ', $text)));
+        $normalized = trim(preg_replace('/\s+/', ' ', $normalized));
+
+        return in_array($normalized, [
+            'banyak',
+            'nama barang',
+            'harga satuan',
+            'jumlah',
+            'jumlah nya',
+            'qty',
+            'quantity',
+            'subtotal',
+            'total',
+        ], true);
+    }
 
     private function parseNotaTextToItems(string $text): array
     {

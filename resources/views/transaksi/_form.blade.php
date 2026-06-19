@@ -9,6 +9,7 @@
     $notaScan = $transaksi->nota_scan ?? null;
     $scanItems = $scanItems ?? [];
     $scanText = $scanText ?? null;
+    $scanSummary = $scanSummary ?? [];
 
     $initialItems = [];
     if (old('barang_id')) {
@@ -72,8 +73,10 @@
             <thead class="table-light text-center">
                 <tr>
                     <th>Barang</th>
+                    <th>Nama Hasil Scan</th>
                     <th>Harga Jual</th>
                     <th>Jumlah</th>
+                    <th>Total OCR</th>
                     <th>Subtotal</th>
                     <th>Aksi</th>
                 </tr>
@@ -144,6 +147,9 @@
     <div class="col-md-6 mb-3">
         <label class="form-label">Grand Total</label>
         <input type="text" id="grand-total" class="form-control" readonly value="Rp 0">
+        @if(!empty($scanSummary['receipt_total']))
+            <small class="text-muted">Total nota OCR: Rp {{ number_format($scanSummary['receipt_total'], 0, ',', '.') }}</small>
+        @endif
     </div>
 </div>
 
@@ -181,6 +187,46 @@
         return options;
     }
 
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    function normalizeText(value) {
+        return String(value ?? '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, ' ')
+            .trim();
+    }
+
+    function findMatchingBarangId(name) {
+        const normalizedName = normalizeText(name);
+
+        if (!normalizedName) {
+            return '';
+        }
+
+        const exact = barangItems.find(item => normalizeText(item.name) === normalizedName);
+
+        if (exact) {
+            return exact.id;
+        }
+
+        const partial = barangItems.find(item => {
+            const itemName = normalizeText(item.name);
+            return itemName && (
+                itemName.includes(normalizedName) ||
+                normalizedName.includes(itemName)
+            );
+        });
+
+        return partial ? partial.id : '';
+    }
+
     function calculateSubtotal(row) {
         const harga = Number(row.querySelector('.harga-jual').value || 0);
         const jumlah = Number(row.querySelector('.jumlah-item').value || 0);
@@ -203,13 +249,19 @@
 
     function createRow(data = {}) {
         const row = document.createElement('tr');
+        const matchedBarangId = data.barang_id || findMatchingBarangId(data.item_name);
+        const itemName = data.item_name ?? '';
+        const ocrTotal = Number(data.ocr_total || 0);
+
         row.innerHTML = `
             <td>
                 <select name="barang_id[]" class="form-select item-barang" required>
-                    ${buildOptions(data.barang_id || '')}
+                    ${buildOptions(matchedBarangId)}
                 </select>
-                <input type="hidden" name="item_name[]" class="item-name" value="${data.item_name ?? ''}">
-                ${data.item_name ? `<small class="text-muted">Hasil scan: ${data.item_name}</small>` : ''}
+                ${itemName && !matchedBarangId ? `<small class="text-danger">Pilih barang yang cocok dari hasil scan.</small>` : ''}
+            </td>
+            <td>
+                <input type="text" name="item_name[]" class="form-control item-name" value="${escapeHtml(itemName)}" placeholder="Nama hasil scan">
             </td>
             <td>
                 <input type="number" name="harga_jual[]" class="form-control harga-jual" min="0" value="${data.harga_jual ?? ''}" required>
@@ -217,6 +269,7 @@
             <td>
                 <input type="number" name="jumlah[]" class="form-control jumlah-item" min="1" value="${data.jumlah ?? 1}" required>
             </td>
+            <td class="text-end text-muted">${ocrTotal ? formatCurrency(ocrTotal) : '-'}</td>
             <td class="item-subtotal text-end">${formatCurrency((data.harga_jual || 0) * (data.jumlah || 0))}</td>
             <td class="text-center">
                 <button type="button" class="btn btn-danger btn-sm btn-remove-row">Hapus</button>
@@ -224,6 +277,7 @@
         `;
 
         const barangSelect = row.querySelector('.item-barang');
+        const itemNameInput = row.querySelector('.item-name');
         const hargaInput = row.querySelector('.harga-jual');
         const jumlahInput = row.querySelector('.jumlah-item');
         const removeButton = row.querySelector('.btn-remove-row');
@@ -234,6 +288,14 @@
                 hargaInput.value = selected.harga;
             }
             calculateSubtotal(row);
+        });
+        itemNameInput.addEventListener('input', event => {
+            if (!barangSelect.value) {
+                const matchedId = findMatchingBarangId(event.target.value);
+                if (matchedId) {
+                    barangSelect.value = matchedId;
+                }
+            }
         });
         hargaInput.addEventListener('input', () => calculateSubtotal(row));
         jumlahInput.addEventListener('input', () => calculateSubtotal(row));
