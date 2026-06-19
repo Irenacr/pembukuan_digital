@@ -1,9 +1,6 @@
 fastapi
 uvicorn[standard]
 python-multipart
-ultralytics
-torch
-torchvision
 opencv-python-headless
 rapidocr_onnxruntime
 numpy

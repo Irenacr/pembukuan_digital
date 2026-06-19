@@ -1,5 +1,6 @@
 import json
 import gc
+import math
 import os
 import sys
 import tempfile
@@ -87,15 +88,28 @@ def debug_import_error(exc):
     sys.stderr.flush()
     raise exc
 
+ONNX_MODEL_PATH = Path(__file__).resolve().parent / 'notaocr_yolov8_train2.onnx'
+if not ONNX_MODEL_PATH.exists():
+    onnx_files = sorted(Path(__file__).resolve().parent.glob('*.onnx'))
+    ONNX_MODEL_PATH = onnx_files[0] if onnx_files else None
+
 MODEL_PATH = Path(__file__).resolve().parent / 'best.pt'
 if not MODEL_PATH.exists():
     pt_files = sorted(Path(__file__).resolve().parent.glob('*.pt'))
-    if pt_files:
-        MODEL_PATH = pt_files[0]
-    else:
-        raise FileNotFoundError(
-            'Model YOLO not found in the ocr/ folder. Place a .pt file such as best.pt or notaocr_yolov8_train2.pt there.'
-        )
+    MODEL_PATH = pt_files[0] if pt_files else None
+
+if ONNX_MODEL_PATH is None and MODEL_PATH is None:
+    raise FileNotFoundError(
+        'Model YOLO not found in the ocr/ folder. Place a .onnx model or a .pt model there.'
+    )
+
+DEFAULT_CLASS_NAMES = [
+    'banyak_barang_satuan',
+    'harga_satuan',
+    'harga_total_perbarang',
+    'nama_barang',
+    'total_value',
+]
 
 
 def ensure_runtime_modules():
@@ -103,14 +117,6 @@ def ensure_runtime_modules():
 
     if runtime_ready:
         return
-
-    try:
-        import torch
-        torch.set_num_threads(int(os.environ.get("OCR_TORCH_THREADS", "1")))
-        print("TORCH OK", file=sys.stderr, flush=True)
-    except Exception as e:
-        print("TORCH ERROR = " + str(e), file=sys.stderr, flush=True)
-        raise
 
     try:
         import cv2 as cv2_module
@@ -135,6 +141,9 @@ def ensure_yolo_loaded():
         if model is not None:
             return
 
+        if MODEL_PATH is None:
+            raise RuntimeError('Model YOLO .pt tidak tersedia. Gunakan OCR_YOLO_BACKEND=onnxruntime.')
+
         try:
             from ultralytics import YOLO
             print("STEP 4 - YOLO IMPORT OK", file=sys.stderr, flush=True)
@@ -144,6 +153,113 @@ def ensure_yolo_loaded():
         print("STEP 9 - LOAD YOLO", file=sys.stderr, flush=True)
         model = YOLO(str(MODEL_PATH))
         print("STEP 10 - YOLO LOADED", file=sys.stderr, flush=True)
+
+
+def sigmoid(value):
+    return 1 / (1 + math.exp(-value))
+
+
+def prepare_yolo_input(image, imgsz):
+    height, width = image.shape[:2]
+    scale = min(imgsz / width, imgsz / height)
+    resized_width = int(round(width * scale))
+    resized_height = int(round(height * scale))
+    pad_x = (imgsz - resized_width) / 2
+    pad_y = (imgsz - resized_height) / 2
+
+    resized = cv2.resize(image, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+    canvas = cv2.copyMakeBorder(
+        resized,
+        int(pad_y),
+        imgsz - resized_height - int(pad_y),
+        int(pad_x),
+        imgsz - resized_width - int(pad_x),
+        cv2.BORDER_CONSTANT,
+        value=(114, 114, 114),
+    )
+
+    blob = canvas[:, :, ::-1].transpose(2, 0, 1)
+    blob = blob.astype('float32') / 255.0
+    blob = blob[None, :, :, :]
+
+    return blob, scale, pad_x, pad_y
+
+
+def run_yolo_onnx(image):
+    if ONNX_MODEL_PATH is None:
+        raise RuntimeError('Model YOLO ONNX tidak ditemukan.')
+
+    try:
+        import numpy as np
+        import onnxruntime as ort
+    except Exception as exc:
+        debug_import_error(exc)
+
+    imgsz = capped_env_int("OCR_YOLO_IMGSZ", 384, 320, 416)
+    conf_threshold = float(os.environ.get("OCR_YOLO_CONF", "0.25"))
+    max_det = capped_env_int("OCR_YOLO_MAX_DET", 8, 1, 10)
+    image_height, image_width = image.shape[:2]
+
+    session_options = ort.SessionOptions()
+    session_options.intra_op_num_threads = int(os.environ.get("OCR_ORT_THREADS", "1"))
+    session_options.inter_op_num_threads = 1
+    session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+    session = ort.InferenceSession(
+        str(ONNX_MODEL_PATH),
+        sess_options=session_options,
+        providers=['CPUExecutionProvider'],
+    )
+
+    blob, scale, pad_x, pad_y = prepare_yolo_input(image, imgsz)
+    output = session.run(None, {session.get_inputs()[0].name: blob})[0]
+    predictions = np.squeeze(output, axis=0).T
+
+    detections = []
+
+    for prediction in predictions:
+        class_scores = prediction[4:]
+        if class_scores.size == 0:
+            continue
+
+        class_id = int(np.argmax(class_scores))
+        confidence = float(class_scores[class_id])
+
+        if confidence > 1:
+            confidence = sigmoid(confidence)
+
+        if confidence < conf_threshold:
+            continue
+
+        cx, cy, width, height = [float(value) for value in prediction[:4]]
+        x1 = (cx - width / 2 - pad_x) / scale
+        y1 = (cy - height / 2 - pad_y) / scale
+        x2 = (cx + width / 2 - pad_x) / scale
+        y2 = (cy + height / 2 - pad_y) / scale
+
+        x1 = max(0, min(int(round(x1)), image_width))
+        y1 = max(0, min(int(round(y1)), image_height))
+        x2 = max(0, min(int(round(x2)), image_width))
+        y2 = max(0, min(int(round(y2)), image_height))
+
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        class_name = DEFAULT_CLASS_NAMES[class_id] if class_id < len(DEFAULT_CLASS_NAMES) else str(class_id)
+
+        detections.append({
+            'bbox': [x1, y1, x2, y2],
+            'confidence': confidence,
+            'class_name': class_name,
+        })
+
+    detections = suppress_overlapping_boxes(
+        detections,
+        float(os.environ.get("OCR_BOX_IOU_THRESHOLD", "0.35")),
+    )
+
+    detections.sort(key=lambda item: item['confidence'], reverse=True)
+    return detections[:max_det], {index: name for index, name in enumerate(DEFAULT_CLASS_NAMES)}
 
 
 def ensure_ocr_loaded():
@@ -311,21 +427,34 @@ def _infer_locked(image_path):
 
     print("STEP 13 - BEFORE YOLO PREDICT", file=sys.stderr, flush=True)
 
-    if low_memory_mode:
-        from ultralytics import YOLO
-        yolo_model = YOLO(str(MODEL_PATH))
-    else:
-        ensure_yolo_loaded()
-        yolo_model = model
+    yolo_backend = os.environ.get("OCR_YOLO_BACKEND", "onnxruntime").strip().lower()
 
-    results = yolo_model(
-        str(image_path),
-        verbose=False,
-        imgsz=capped_env_int("OCR_YOLO_IMGSZ", 384, 320, 416),
-        conf=float(os.environ.get("OCR_YOLO_CONF", "0.25")),
-        max_det=capped_env_int("OCR_YOLO_MAX_DET", 8, 1, 10),
-        device=os.environ.get("OCR_YOLO_DEVICE", "cpu"),
-    )
+    if yolo_backend == "onnxruntime" and ONNX_MODEL_PATH is not None:
+        candidate_boxes, result_names = run_yolo_onnx(image)
+        results = None
+        result = None
+        yolo_model = None
+    else:
+        if low_memory_mode:
+            if MODEL_PATH is None:
+                raise RuntimeError('Model YOLO .pt tidak tersedia. Gunakan OCR_YOLO_BACKEND=onnxruntime.')
+            from ultralytics import YOLO
+            yolo_model = YOLO(str(MODEL_PATH))
+        else:
+            ensure_yolo_loaded()
+            yolo_model = model
+
+        results = yolo_model(
+            str(image_path),
+            verbose=False,
+            imgsz=capped_env_int("OCR_YOLO_IMGSZ", 384, 320, 416),
+            conf=float(os.environ.get("OCR_YOLO_CONF", "0.25")),
+            max_det=capped_env_int("OCR_YOLO_MAX_DET", 8, 1, 10),
+            device=os.environ.get("OCR_YOLO_DEVICE", "cpu"),
+        )
+
+        result = results[0]
+        result_names = dict(result.names)
 
     print("STEP 14 - AFTER YOLO PREDICT", file=sys.stderr, flush=True)
 
@@ -338,16 +467,19 @@ def _infer_locked(image_path):
         'items': [],
     }
 
-    result = results[0]
-    result_names = dict(result.names)
-
     # Jika tidak ada objek YOLO, jangan OCR seluruh nota.
     # Flow scan form hanya boleh memakai teks dari kotak YOLO.
-    if result.boxes is None or len(result.boxes) == 0:
+    if yolo_backend == "onnxruntime" and ONNX_MODEL_PATH is not None:
+        has_boxes = len(candidate_boxes) > 0
+    else:
+        has_boxes = result.boxes is not None and len(result.boxes) > 0
+
+    if not has_boxes:
         output['raw_text'] = ''
         output['ocr_text'] = ''
         if low_memory_mode:
-            del results, result, yolo_model
+            if results is not None:
+                del results, result, yolo_model
             gc.collect()
         return output
 
@@ -365,38 +497,55 @@ def _infer_locked(image_path):
     max_crop_pixels = max(min_crop_area, capped_env_int("OCR_MAX_CROP_PIXELS", 90000, 20000, 120000))
     box_iou_threshold = float(os.environ.get("OCR_BOX_IOU_THRESHOLD", "0.35"))
     crop_padding = max(0, int(os.environ.get("OCR_CROP_PADDING", "2")))
-    candidate_boxes = []
+    if yolo_backend != "onnxruntime" or ONNX_MODEL_PATH is None:
+        candidate_boxes = []
+    else:
+        candidate_boxes = [
+            box for box in candidate_boxes
+            if box['class_name'] in ocr_item_classes
+        ]
     image_height, image_width = image.shape[:2]
 
-    for box in result.boxes:
+    if yolo_backend == "onnxruntime" and ONNX_MODEL_PATH is not None:
+        for detected in candidate_boxes:
+            x1, y1, x2, y2 = detected['bbox']
+            detected['bbox'] = [
+                max(0, min(x1 - crop_padding, image_width)),
+                max(0, min(y1 - crop_padding, image_height)),
+                max(0, min(x2 + crop_padding, image_width)),
+                max(0, min(y2 + crop_padding, image_height)),
+            ]
 
-        x1, y1, x2, y2 = map(
-            int,
-            box.xyxy[0].tolist()
-        )
+    if yolo_backend != "onnxruntime" or ONNX_MODEL_PATH is None:
+        for box in result.boxes:
 
-        x1 = max(0, min(x1 - crop_padding, image_width))
-        y1 = max(0, min(y1 - crop_padding, image_height))
-        x2 = max(0, min(x2 + crop_padding, image_width))
-        y2 = max(0, min(y2 + crop_padding, image_height))
+            x1, y1, x2, y2 = map(
+                int,
+                box.xyxy[0].tolist()
+            )
 
-        if x2 <= x1 or y2 <= y1:
-            continue
+            x1 = max(0, min(x1 - crop_padding, image_width))
+            y1 = max(0, min(y1 - crop_padding, image_height))
+            x2 = max(0, min(x2 + crop_padding, image_width))
+            y2 = max(0, min(y2 + crop_padding, image_height))
 
-        confidence = float(box.conf[0])
+            if x2 <= x1 or y2 <= y1:
+                continue
 
-        class_id = int(box.cls[0])
+            confidence = float(box.conf[0])
 
-        class_name = result_names[class_id]
+            class_id = int(box.cls[0])
 
-        if class_name not in ocr_item_classes:
-            continue
+            class_name = result_names[class_id]
 
-        candidate_boxes.append({
-            'bbox': [x1, y1, x2, y2],
-            'confidence': confidence,
-            'class_name': class_name,
-        })
+            if class_name not in ocr_item_classes:
+                continue
+
+            candidate_boxes.append({
+                'bbox': [x1, y1, x2, y2],
+                'confidence': confidence,
+                'class_name': class_name,
+            })
 
     candidate_boxes = suppress_overlapping_boxes(
         candidate_boxes,
@@ -404,7 +553,8 @@ def _infer_locked(image_path):
     )
 
     if low_memory_mode:
-        del results, result, yolo_model
+        if results is not None:
+            del results, result, yolo_model
         release_yolo_model()
         gc.collect()
 

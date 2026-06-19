@@ -81,6 +81,7 @@ def build_ocr_env() -> dict:
         "NUMEXPR_NUM_THREADS": "1",
         "MALLOC_ARENA_MAX": "2",
         "OMP_WAIT_POLICY": "PASSIVE",
+        "OCR_YOLO_BACKEND": "onnxruntime",
         "OCR_LOW_MEMORY_MODE": "true",
         "OCR_RELEASE_OCR_AFTER_SCAN": "true",
         "OCR_MAX_IMAGE_DIM": str(capped_env_int("OCR_MAX_IMAGE_DIM", 640, 320, 736)),
@@ -88,7 +89,7 @@ def build_ocr_env() -> dict:
         "OCR_YOLO_MAX_DET": str(capped_env_int("OCR_YOLO_MAX_DET", 8, 1, 10)),
         "OCR_CROP_MAX_DET": str(capped_env_int("OCR_CROP_MAX_DET", 5, 1, 6)),
         "OCR_MAX_CROP_PIXELS": str(capped_env_int("OCR_MAX_CROP_PIXELS", 90000, 20000, 120000)),
-        "OCR_TORCH_THREADS": "1",
+        "OCR_ORT_THREADS": "1",
         "OCR_CV2_THREADS": "1",
     })
 

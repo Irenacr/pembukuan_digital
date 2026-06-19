@@ -4,6 +4,7 @@ ENV PYTHONUNBUFFERED=1 \
     MALLOC_ARENA_MAX=2 \
     OMP_WAIT_POLICY=PASSIVE \
     YOLO_CONFIG_DIR=/tmp/ultralytics \
+    OCR_YOLO_BACKEND=onnxruntime \
     OCR_LOW_MEMORY_MODE=true \
     OCR_RELEASE_OCR_AFTER_SCAN=true \
     OCR_WARMUP_ON_START=false \
@@ -20,8 +21,7 @@ ENV PYTHONUNBUFFERED=1 \
     OCR_SCAN_TIMEOUT=75 \
     OCR_BOX_IOU_THRESHOLD=0.35 \
     OCR_ITEM_CLASSES=banyak_barang_satuan,harga_satuan,harga_total_perbarang,nama_barang,total_value \
-    OCR_YOLO_DEVICE=cpu \
-    OCR_TORCH_THREADS=1 \
+    OCR_ORT_THREADS=1 \
     OCR_CV2_THREADS=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -36,7 +36,7 @@ RUN pip install --no-cache-dir -r /app/ocr_service/requirements.txt
 
 RUN mkdir -p /app/ocr
 COPY ocr/*.py /app/ocr/
-COPY ocr/*.pt /app/ocr/
+COPY ocr/*.onnx /app/ocr/
 COPY ocr_service /app/ocr_service
 
 EXPOSE 8080

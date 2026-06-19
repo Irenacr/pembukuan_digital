@@ -5,7 +5,7 @@ Target production:
 - Service 1: Laravel web app.
 - Service 2: Python OCR API.
 
-Dengan pola ini, Laravel tidak menjalankan `torch`, `ultralytics`, dan RapidOCR langsung dari request web.
+Dengan pola ini, Laravel tidak menjalankan OCR langsung dari request web. OCR service memakai YOLO ONNX + RapidOCR agar lebih hemat memori di Railway.
 
 ## 1. Deploy OCR Service
 
@@ -23,6 +23,7 @@ Dengan pola ini, Laravel tidak menjalankan `torch`, `ultralytics`, dan RapidOCR 
    MALLOC_ARENA_MAX=2
    OMP_WAIT_POLICY=PASSIVE
    YOLO_CONFIG_DIR=/tmp/ultralytics
+   OCR_YOLO_BACKEND=onnxruntime
    OCR_LOW_MEMORY_MODE=true
    OCR_RELEASE_OCR_AFTER_SCAN=true
    OCR_WARMUP_ON_START=false
@@ -39,8 +40,7 @@ Dengan pola ini, Laravel tidak menjalankan `torch`, `ultralytics`, dan RapidOCR 
    OCR_MAX_UPLOAD_MB=3
    OCR_SCAN_TIMEOUT=75
    OCR_BOX_IOU_THRESHOLD=0.35
-   OCR_YOLO_DEVICE=cpu
-   OCR_TORCH_THREADS=1
+   OCR_ORT_THREADS=1
    OCR_CV2_THREADS=1
    ```
 
@@ -109,11 +109,12 @@ Dengan pola ini, Laravel tidak menjalankan `torch`, `ultralytics`, dan RapidOCR 
 - Jangan kosongkan `OCR_SERVICE_URL` di production.
 - Jangan set `APP_DEBUG=true` di production.
 - Jika OCR masih OOM, naikkan memory OCR service atau turunkan `OCR_MAX_IMAGE_DIM`, `OCR_YOLO_IMGSZ`, `OCR_YOLO_MAX_DET`, dan `OCR_CROP_MAX_DET`.
-- FastAPI menjalankan OCR di subprocess supaya memori `torch`, YOLO, dan RapidOCR dilepas OS setelah scan selesai.
+- FastAPI menjalankan OCR di subprocess supaya memori YOLO ONNX dan RapidOCR dilepas OS setelah scan selesai.
+- OCR service runtime tidak perlu `torch`, `torchvision`, atau `ultralytics`; model YOLO dijalankan dari file `.onnx`.
 - Jika gambar nota dari HP terlalu besar, OCR service otomatis resize maksimal sesuai `OCR_MAX_IMAGE_DIM`.
 - RapidOCR hanya memproses crop dari bounding box YOLO, bukan seluruh gambar nota.
 - `/health` tidak memuat model OCR, jadi Railway healthcheck tetap ringan.
-- `OCR_LOW_MEMORY_MODE=true` membuat YOLO dilepas sebelum RapidOCR mulai membaca crop.
+- `OCR_YOLO_BACKEND=onnxruntime` penting untuk menghindari load PyTorch/Ultralytics di Railway.
 - `OCR_WARMUP_ON_START=false` penting untuk plan Railway kecil agar service tidak OOM saat baru start.
 - `OCR_HTTP_TIMEOUT` di Laravel harus lebih besar dari waktu scan normal, tetapi jangan terlalu tinggi agar user tidak menunggu tanpa kepastian.
 - Jika Railway memberi error `signal 9`, naikkan memory OCR service terlebih dahulu. Laravel service tidak perlu dinaikkan untuk masalah ini.
