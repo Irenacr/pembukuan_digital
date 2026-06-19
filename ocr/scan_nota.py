@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import traceback
 from pathlib import Path
 
@@ -36,13 +37,11 @@ print("USERPROFILE=" + os.environ.get('USERPROFILE', ''), file=sys.stderr)
 print("APPDATA=" + os.environ.get('APPDATA', ''), file=sys.stderr)
 print("LOCALAPPDATA=" + os.environ.get('LOCALAPPDATA', ''), file=sys.stderr)
 
-try:
-    import torch
-    torch.set_num_threads(int(os.environ.get("OCR_TORCH_THREADS", "1")))
-    print("TORCH OK", file=sys.stderr)
-except Exception as e:
-    print("TORCH ERROR = " + str(e), file=sys.stderr)
-    raise
+cv2 = None
+ocr = None
+model = None
+runtime_ready = False
+models_lock = threading.Lock()
 
 
 def debug_import_error(exc):
@@ -66,25 +65,6 @@ def debug_import_error(exc):
     sys.stderr.flush()
     raise exc
 
-try:
-    import cv2
-    cv2.setNumThreads(int(os.environ.get("OCR_CV2_THREADS", "1")))
-    print("STEP 3 - CV2 OK", file=sys.stderr, flush=True)
-except Exception as exc:
-    debug_import_error(exc)
-
-try:
-    from ultralytics import YOLO
-    print("STEP 4 - YOLO IMPORT OK", file=sys.stderr, flush=True)
-except Exception as exc:
-    debug_import_error(exc)
-
-try:
-    from rapidocr_onnxruntime import RapidOCR
-    print("STEP 5 - RAPIDOCR IMPORT OK", file=sys.stderr, flush=True)
-except Exception as exc:
-    debug_import_error(exc)
-
 MODEL_PATH = Path(__file__).resolve().parent / 'best.pt'
 if not MODEL_PATH.exists():
     pt_files = sorted(Path(__file__).resolve().parent.glob('*.pt'))
@@ -95,17 +75,68 @@ if not MODEL_PATH.exists():
             'Model YOLO not found in the ocr/ folder. Place a .pt file such as best.pt or notaocr_yolov8_train2.pt there.'
         )
 
-#print(f'Using YOLO model: {MODEL_PATH}', file=sys.stderr)
-print("STEP 7 - CREATE RAPIDOCR", file=sys.stderr, flush=True)
-ocr = RapidOCR()
-print("STEP 8 - RAPIDOCR CREATED", file=sys.stderr, flush=True)
 
-print("STEP 9 - LOAD YOLO", file=sys.stderr, flush=True)
-model = YOLO(str(MODEL_PATH))
-print("STEP 10 - YOLO LOADED", file=sys.stderr, flush=True)
+def ensure_runtime_modules():
+    global cv2, runtime_ready
+
+    if runtime_ready:
+        return
+
+    try:
+        import torch
+        torch.set_num_threads(int(os.environ.get("OCR_TORCH_THREADS", "1")))
+        print("TORCH OK", file=sys.stderr, flush=True)
+    except Exception as e:
+        print("TORCH ERROR = " + str(e), file=sys.stderr, flush=True)
+        raise
+
+    try:
+        import cv2 as cv2_module
+        cv2_module.setNumThreads(int(os.environ.get("OCR_CV2_THREADS", "1")))
+        cv2 = cv2_module
+        print("STEP 3 - CV2 OK", file=sys.stderr, flush=True)
+    except Exception as exc:
+        debug_import_error(exc)
+
+    runtime_ready = True
+
+
+def ensure_models_loaded():
+    global ocr, model
+
+    if ocr is not None and model is not None:
+        return
+
+    with models_lock:
+        ensure_runtime_modules()
+
+        if ocr is not None and model is not None:
+            return
+
+        try:
+            from ultralytics import YOLO
+            print("STEP 4 - YOLO IMPORT OK", file=sys.stderr, flush=True)
+        except Exception as exc:
+            debug_import_error(exc)
+
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+            print("STEP 5 - RAPIDOCR IMPORT OK", file=sys.stderr, flush=True)
+        except Exception as exc:
+            debug_import_error(exc)
+
+        print("STEP 7 - CREATE RAPIDOCR", file=sys.stderr, flush=True)
+        ocr = RapidOCR()
+        print("STEP 8 - RAPIDOCR CREATED", file=sys.stderr, flush=True)
+
+        print("STEP 9 - LOAD YOLO", file=sys.stderr, flush=True)
+        model = YOLO(str(MODEL_PATH))
+        print("STEP 10 - YOLO LOADED", file=sys.stderr, flush=True)
 
 
 def load_image(image_path):
+    ensure_runtime_modules()
+
     path = Path(image_path)
     if path.suffix.lower() == '.pdf':
         raise RuntimeError('PDF support requires pdf2image and poppler. Convert to image first.')
@@ -116,13 +147,14 @@ def load_image(image_path):
     return image
 
 
-def ocr_image(image):
+def ocr_crop_image(crop_image):
+    ensure_models_loaded()
 
     with tempfile.TemporaryDirectory() as tmpdir:
 
         tmp_file = os.path.join(tmpdir, 'crop.jpg')
 
-        cv2.imwrite(tmp_file, image)
+        cv2.imwrite(tmp_file, crop_image)
 
         result, _ = ocr(tmp_file)
 
@@ -143,7 +175,52 @@ def ocr_image(image):
 
         return lines
 
+
+def box_iou(a, b):
+    ax1, ay1, ax2, ay2 = a['bbox']
+    bx1, by1, bx2, by2 = b['bbox']
+
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+
+    inter_w = max(0, inter_x2 - inter_x1)
+    inter_h = max(0, inter_y2 - inter_y1)
+    inter_area = inter_w * inter_h
+
+    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+    union = area_a + area_b - inter_area
+
+    if union <= 0:
+        return 0
+
+    return inter_area / union
+
+
+def suppress_overlapping_boxes(boxes, iou_threshold):
+    kept = []
+
+    for candidate in sorted(boxes, key=lambda item: item['confidence'], reverse=True):
+        is_duplicate = False
+
+        for existing in kept:
+            if (
+                candidate['class_name'] == existing['class_name']
+                and box_iou(candidate, existing) > iou_threshold
+            ):
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
+            kept.append(candidate)
+
+    return kept
+
+
 def infer(image_path):
+    ensure_models_loaded()
 
     print("STEP 11 - ENTER INFER", file=sys.stderr, flush=True)
 
@@ -162,7 +239,7 @@ def infer(image_path):
         verbose=False,
         imgsz=int(os.environ.get("OCR_YOLO_IMGSZ", "512")),
         conf=float(os.environ.get("OCR_YOLO_CONF", "0.25")),
-        max_det=int(os.environ.get("OCR_YOLO_MAX_DET", "24")),
+        max_det=int(os.environ.get("OCR_YOLO_MAX_DET", "16")),
         device=os.environ.get("OCR_YOLO_DEVICE", "cpu"),
     )
 
@@ -171,29 +248,36 @@ def infer(image_path):
     output = {
         'raw_text': None,
         'ocr_text': None,
+        'ocr_scope': 'yolo_crops_only',
         'detections': [],
         'items': [],
     }
 
     result = results[0]
 
-    # jika tidak ada objek terdeteksi
+    # Jika tidak ada objek YOLO, jangan OCR seluruh nota.
+    # Flow scan form hanya boleh memakai teks dari kotak YOLO.
     if result.boxes is None or len(result.boxes) == 0:
-        lines = ocr_image(image)
-
-        text = '\n'.join([
-            line['text']
-            for line in lines
-        ])
-
-        output['raw_text'] = text
-        output['ocr_text'] = text
-
+        output['raw_text'] = ''
+        output['ocr_text'] = ''
         return output
 
-    crop_max_det = int(os.environ.get("OCR_CROP_MAX_DET", "20"))
-    min_crop_area = int(os.environ.get("OCR_MIN_CROP_AREA", "80"))
+    default_ocr_item_classes = ",".join(result.names.values())
+    ocr_item_classes = {
+        class_name.strip()
+        for class_name in os.environ.get(
+            "OCR_ITEM_CLASSES",
+            default_ocr_item_classes,
+        ).split(",")
+        if class_name.strip()
+    }
+    crop_max_det = max(1, int(os.environ.get("OCR_CROP_MAX_DET", "12")))
+    min_crop_area = max(1, int(os.environ.get("OCR_MIN_CROP_AREA", "80")))
+    max_crop_pixels = max(min_crop_area, int(os.environ.get("OCR_MAX_CROP_PIXELS", "250000")))
+    box_iou_threshold = float(os.environ.get("OCR_BOX_IOU_THRESHOLD", "0.35"))
+    crop_padding = max(0, int(os.environ.get("OCR_CROP_PADDING", "2")))
     candidate_boxes = []
+    image_height, image_width = image.shape[:2]
 
     for box in result.boxes:
 
@@ -202,17 +286,33 @@ def infer(image_path):
             box.xyxy[0].tolist()
         )
 
+        x1 = max(0, min(x1 - crop_padding, image_width))
+        y1 = max(0, min(y1 - crop_padding, image_height))
+        x2 = max(0, min(x2 + crop_padding, image_width))
+        y2 = max(0, min(y2 + crop_padding, image_height))
+
+        if x2 <= x1 or y2 <= y1:
+            continue
+
         confidence = float(box.conf[0])
 
         class_id = int(box.cls[0])
 
         class_name = result.names[class_id]
 
+        if class_name not in ocr_item_classes:
+            continue
+
         candidate_boxes.append({
             'bbox': [x1, y1, x2, y2],
             'confidence': confidence,
             'class_name': class_name,
         })
+
+    candidate_boxes = suppress_overlapping_boxes(
+        candidate_boxes,
+        box_iou_threshold,
+    )
 
     candidate_boxes.sort(key=lambda item: (
         item['bbox'][1],
@@ -227,8 +327,21 @@ def infer(image_path):
 
         crop = image[y1:y2, x1:x2]
 
-        if crop.size == 0 or crop.shape[0] * crop.shape[1] < min_crop_area:
+        crop_area = crop.shape[0] * crop.shape[1] if crop.size else 0
+
+        if crop_area < min_crop_area:
             continue
+
+        if crop_area > max_crop_pixels:
+            scale = (max_crop_pixels / crop_area) ** 0.5
+            crop = cv2.resize(
+                crop,
+                (
+                    max(1, int(crop.shape[1] * scale)),
+                    max(1, int(crop.shape[0] * scale)),
+                ),
+                interpolation=cv2.INTER_AREA,
+            )
 
         print(
             f"STEP 15 - OCR CLASS {class_name}",
@@ -236,7 +349,7 @@ def infer(image_path):
             flush=True
         )
 
-        lines = ocr_image(crop)
+        lines = ocr_crop_image(crop)
 
         text = '\n'.join([
             line['text']
@@ -256,21 +369,6 @@ def infer(image_path):
         for item in output['detections']
         if item['text']
     ])
-
-    if not joined_text:
-
-        print(
-            "STEP 16 - FULL IMAGE OCR",
-            file=sys.stderr,
-            flush=True
-        )
-
-        lines = ocr_image(image)
-
-        joined_text = '\n'.join([
-            line['text']
-            for line in lines
-        ])
 
     output['raw_text'] = joined_text
     output['ocr_text'] = joined_text

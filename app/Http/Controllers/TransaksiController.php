@@ -192,7 +192,7 @@ PY;
     null,
     $processEnv
 );
-    $process->setTimeout(180);
+    $process->setTimeout(max(15, min(180, (int) env('OCR_PROCESS_TIMEOUT', 120))));
     
     $process->run();
 
@@ -242,19 +242,23 @@ PY;
             throw new \RuntimeException('File nota tidak bisa dibaca oleh Laravel.');
         }
 
-        $response = Http::timeout(180)
+        $timeout = max(15, min(180, (int) env('OCR_HTTP_TIMEOUT', 120)));
+
+        $response = Http::timeout($timeout)
+            ->connectTimeout(10)
             ->attach('file', file_get_contents($filePath), basename($filePath))
             ->post($endpoint);
 
         Log::info('OCR remote process output', [
             'successful' => $response->successful(),
             'status' => $response->status(),
-            'body' => $response->body(),
+            'body_length' => strlen($response->body()),
+            'body_preview' => substr($response->body(), 0, 500),
         ]);
 
         if (!$response->successful()) {
             $message = $response->json('detail') ?: $response->body();
-            if ($response->status() === 502) {
+            if (in_array($response->status(), [502, 503, 504], true)) {
                 $message = 'OCR service tidak merespons tepat waktu. Coba ulangi dengan foto lebih kecil/jelas, atau naikkan memory OCR service di Railway.';
             }
 
@@ -396,7 +400,11 @@ PY;
 
             $item['item_name'] = trim(preg_replace('/\s+/', ' ', $item['item_name']));
 
-            if ($item['item_name'] === '' && $item['harga_jual'] <= 0 && $item['ocr_total'] <= 0) {
+            if ($item['harga_jual'] <= 0 && $item['ocr_total'] > 0 && $item['jumlah'] > 0) {
+                $item['harga_jual'] = (int) round($item['ocr_total'] / $item['jumlah']);
+            }
+
+            if ($item['item_name'] === '' || $this->isInvalidOcrItemName($item['item_name'])) {
                 continue;
             }
 
@@ -475,6 +483,39 @@ PY;
             'subtotal',
             'total',
         ], true);
+    }
+
+    private function isInvalidOcrItemName(string $text): bool
+    {
+        $normalized = strtolower(trim(preg_replace('/[^a-zA-Z\s]/', ' ', $text)));
+        $normalized = trim(preg_replace('/\s+/', ' ', $normalized));
+
+        if ($normalized === '') {
+            return true;
+        }
+
+        $tokens = array_values(array_filter(explode(' ', $normalized)));
+        $headerTokens = ['banyak', 'nama', 'barang', 'qty', 'quantity', 'harga', 'satuan', 'jumlah', 'total'];
+
+        if ($tokens && count(array_diff($tokens, $headerTokens)) === 0) {
+            return true;
+        }
+
+        foreach ([
+            'terima kasih',
+            'kunjungan',
+            'sudah dibeli',
+            'tidak dapat',
+            'dikembalikan',
+            'nota',
+            'service',
+        ] as $badFragment) {
+            if (str_contains($normalized, $badFragment)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function parseNotaTextToItems(string $text): array

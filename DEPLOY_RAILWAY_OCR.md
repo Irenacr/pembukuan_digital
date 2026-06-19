@@ -23,9 +23,14 @@ Dengan pola ini, Laravel tidak menjalankan `torch`, `ultralytics`, dan RapidOCR 
    OCR_MAX_IMAGE_DIM=960
    OCR_YOLO_IMGSZ=512
    OCR_YOLO_CONF=0.25
-   OCR_YOLO_MAX_DET=24
-   OCR_CROP_MAX_DET=20
+   OCR_YOLO_MAX_DET=16
+   OCR_CROP_MAX_DET=12
+   OCR_CROP_PADDING=2
+   OCR_ITEM_CLASSES=banyak_barang_satuan,harga_satuan,harga_total_perbarang,nama_barang,total_value
    OCR_MIN_CROP_AREA=80
+   OCR_MAX_CROP_PIXELS=250000
+   OCR_MAX_UPLOAD_MB=6
+   OCR_BOX_IOU_THRESHOLD=0.35
    OCR_YOLO_DEVICE=cpu
    OCR_TORCH_THREADS=1
    OCR_CV2_THREADS=1
@@ -72,6 +77,7 @@ Dengan pola ini, Laravel tidak menjalankan `torch`, `ultralytics`, dan RapidOCR 
 
    ```text
    OCR_SERVICE_URL=https://URL-OCR-SERVICE.up.railway.app
+   OCR_HTTP_TIMEOUT=120
    ```
 
 ## 3. Cara Kerja Scan Nota
@@ -88,4 +94,7 @@ Dengan pola ini, Laravel tidak menjalankan `torch`, `ultralytics`, dan RapidOCR 
 - Jangan set `APP_DEBUG=true` di production.
 - Jika OCR masih lambat, naikkan resource OCR service, bukan Laravel service.
 - Jika gambar nota dari HP terlalu besar, OCR service otomatis resize maksimal sesuai `OCR_MAX_IMAGE_DIM`.
+- RapidOCR hanya memproses crop dari bounding box YOLO, bukan seluruh gambar nota.
+- `/health` tidak memuat model OCR, jadi Railway healthcheck tetap ringan. Model YOLO/RapidOCR dimuat saat scan pertama.
+- `OCR_HTTP_TIMEOUT` di Laravel harus lebih besar dari waktu scan normal, tetapi jangan terlalu tinggi agar user tidak menunggu tanpa kepastian.
 - Jika Railway memberi error `signal 9`, naikkan memory OCR service terlebih dahulu. Laravel service tidak perlu dinaikkan untuk masalah ini.
