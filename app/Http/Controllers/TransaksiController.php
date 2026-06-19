@@ -266,6 +266,8 @@ PY;
                 $message = 'OCR service kehabisan memori. Turunkan ukuran foto scan atau naikkan memory OCR service di Railway.';
             } elseif ($response->status() === 502) {
                 $message = 'OCR service tidak merespons tepat waktu. Coba ulangi dengan foto lebih kecil/jelas, atau naikkan memory OCR service di Railway.';
+            } elseif ($response->status() === 500 && $message) {
+                $message = 'OCR service error: ' . $message;
             }
 
             throw new \RuntimeException('OCR service gagal: ' . $message);

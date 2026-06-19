@@ -86,6 +86,7 @@ def build_ocr_env() -> dict:
         "OCR_RELEASE_OCR_AFTER_SCAN": "true",
         "OCR_MAX_IMAGE_DIM": str(capped_env_int("OCR_MAX_IMAGE_DIM", 640, 320, 736)),
         "OCR_YOLO_IMGSZ": str(capped_env_int("OCR_YOLO_IMGSZ", 384, 320, 416)),
+        "OCR_YOLO_CONF": os.environ.get("OCR_YOLO_CONF", "0.35"),
         "OCR_YOLO_MAX_DET": str(capped_env_int("OCR_YOLO_MAX_DET", 8, 1, 10)),
         "OCR_CROP_MAX_DET": str(capped_env_int("OCR_CROP_MAX_DET", 5, 1, 6)),
         "OCR_MAX_CROP_PIXELS": str(capped_env_int("OCR_MAX_CROP_PIXELS", 90000, 20000, 120000)),
@@ -120,7 +121,8 @@ def run_ocr_subprocess(image_path: str, timeout: int) -> dict:
         if process.returncode in {-9, 137}:
             raise MemoryError("OCR subprocess kehabisan memori.")
 
-        raise RuntimeError(process.stderr.strip() or process.stdout.strip() or "OCR subprocess gagal.")
+        error_text = process.stderr.strip() or process.stdout.strip() or "OCR subprocess gagal."
+        raise RuntimeError(error_text[-1500:])
 
     stdout_lines = [line.strip() for line in process.stdout.splitlines() if line.strip()]
     json_payload = stdout_lines[-1] if stdout_lines else ""
@@ -235,7 +237,8 @@ async def scan(file: UploadFile = File(...)):
             raise HTTPException(status_code=429, detail=str(exc)) from exc
 
         logger.exception("OCR scan runtime failed")
-        raise HTTPException(status_code=500, detail="OCR service gagal memproses nota.") from exc
+        detail = str(exc).strip() or "OCR service gagal memproses nota."
+        raise HTTPException(status_code=500, detail=detail[-800:]) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:

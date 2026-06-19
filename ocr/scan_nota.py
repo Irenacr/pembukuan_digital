@@ -196,7 +196,7 @@ def run_yolo_onnx(image):
         debug_import_error(exc)
 
     imgsz = capped_env_int("OCR_YOLO_IMGSZ", 384, 320, 416)
-    conf_threshold = float(os.environ.get("OCR_YOLO_CONF", "0.25"))
+    conf_threshold = float(os.environ.get("OCR_YOLO_CONF", "0.35"))
     max_det = capped_env_int("OCR_YOLO_MAX_DET", 8, 1, 10)
     image_height, image_width = image.shape[:2]
 
@@ -334,7 +334,15 @@ def ocr_crop_image(crop_image):
 
         cv2.imwrite(tmp_file, crop_image)
 
-        result, _ = ocr(tmp_file)
+        try:
+            result, _ = ocr(tmp_file)
+        except Exception as exc:
+            print(
+                "RAPIDOCR CROP ERROR = " + str(exc),
+                file=sys.stderr,
+                flush=True,
+            )
+            return []
 
         lines = []
 
@@ -448,7 +456,7 @@ def _infer_locked(image_path):
             str(image_path),
             verbose=False,
             imgsz=capped_env_int("OCR_YOLO_IMGSZ", 384, 320, 416),
-            conf=float(os.environ.get("OCR_YOLO_CONF", "0.25")),
+            conf=float(os.environ.get("OCR_YOLO_CONF", "0.35")),
             max_det=capped_env_int("OCR_YOLO_MAX_DET", 8, 1, 10),
             device=os.environ.get("OCR_YOLO_DEVICE", "cpu"),
         )

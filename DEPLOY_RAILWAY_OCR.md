@@ -30,7 +30,7 @@ Dengan pola ini, Laravel tidak menjalankan OCR langsung dari request web. OCR se
    OCR_MAX_CONCURRENT_SCANS=1
    OCR_MAX_IMAGE_DIM=640
    OCR_YOLO_IMGSZ=384
-   OCR_YOLO_CONF=0.25
+   OCR_YOLO_CONF=0.35
    OCR_YOLO_MAX_DET=8
    OCR_CROP_MAX_DET=5
    OCR_CROP_PADDING=2
