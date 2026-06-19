@@ -41,7 +41,7 @@ Route::middleware(['auth'])->group(function () {
 
     // ✔ semua karyawan
     Route::resource('customer', CustomerController::class);
-    Route::resource('barang', BarangController::class);
+    Route::resource('barang', BarangController::class)->only(['index']);
     Route::get('transaksi/scan', [TransaksiController::class, 'scanForm'])->name('transaksi.scan');
     Route::post('transaksi/scan', [TransaksiController::class, 'scanProcess'])->name('transaksi.scan.process');
     Route::resource('transaksi', TransaksiController::class);
@@ -51,6 +51,14 @@ Route::middleware(['auth'])->group(function () {
 
 // ================= 🔥 KHUSUS ADMIN =================
 Route::middleware(['auth','role:admin'])->group(function () {
+
+    Route::resource('barang', BarangController::class)->only([
+        'create',
+        'store',
+        'edit',
+        'update',
+        'destroy',
+    ]);
 
     Route::resource('pembelian', PembelianController::class);
 

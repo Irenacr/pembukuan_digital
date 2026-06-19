@@ -88,6 +88,7 @@
 <script>
 
 let file = null;
+let uploadFile = null;
 
 const input = document.getElementById('file');
 const btn = document.getElementById('scan');
@@ -111,6 +112,7 @@ const previewPlaceholder = `
 input.addEventListener('change', () => {
 
     file = input.files[0];
+    uploadFile = null;
 
     if (!file) {
 
@@ -162,10 +164,17 @@ btn.addEventListener('click', async () => {
 
     const formData = new FormData();
 
+    try {
+        uploadFile = uploadFile || await resizeImageForUpload(file);
+    } catch (err) {
+        console.warn('Gagal resize gambar, memakai file asli.', err);
+        uploadFile = file;
+    }
+
     formData.append(
         'nota_scan',
-        file,
-        file.name
+        uploadFile,
+        uploadFile.name || file.name
     );
 
     let response;
@@ -316,6 +325,67 @@ function format(n) {
     return n
         .toString()
         .replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
+
+function resizeImageForUpload(sourceFile) {
+
+    const maxDimension = 1280;
+    const quality = 0.82;
+
+    if (!sourceFile.type.startsWith('image/')) {
+        return Promise.resolve(sourceFile);
+    }
+
+    return new Promise((resolve, reject) => {
+
+        const img = new Image();
+        const objectUrl = URL.createObjectURL(sourceFile);
+
+        img.onload = () => {
+
+            URL.revokeObjectURL(objectUrl);
+
+            const longest = Math.max(img.width, img.height);
+
+            if (longest <= maxDimension && sourceFile.size <= 1500000) {
+                resolve(sourceFile);
+                return;
+            }
+
+            const scale = Math.min(1, maxDimension / longest);
+            const canvas = document.createElement('canvas');
+
+            canvas.width = Math.round(img.width * scale);
+            canvas.height = Math.round(img.height * scale);
+
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+            canvas.toBlob(blob => {
+
+                if (!blob) {
+                    reject(new Error('Canvas gagal membuat blob gambar.'));
+                    return;
+                }
+
+                const resizedName =
+                    sourceFile.name.replace(/\.[^.]+$/, '') + '.jpg';
+
+                resolve(new File([blob], resizedName, {
+                    type: 'image/jpeg',
+                    lastModified: Date.now()
+                }));
+
+            }, 'image/jpeg', quality);
+        };
+
+        img.onerror = () => {
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error('Gambar tidak bisa dibaca browser.'));
+        };
+
+        img.src = objectUrl;
+    });
 }
 
 </script>

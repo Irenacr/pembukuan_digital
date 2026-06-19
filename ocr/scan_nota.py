@@ -160,9 +160,9 @@ def infer(image_path):
     results = model(
         str(image_path),
         verbose=False,
-        imgsz=int(os.environ.get("OCR_YOLO_IMGSZ", "640")),
+        imgsz=int(os.environ.get("OCR_YOLO_IMGSZ", "512")),
         conf=float(os.environ.get("OCR_YOLO_CONF", "0.25")),
-        max_det=int(os.environ.get("OCR_YOLO_MAX_DET", "20")),
+        max_det=int(os.environ.get("OCR_YOLO_MAX_DET", "16")),
         device=os.environ.get("OCR_YOLO_DEVICE", "cpu"),
     )
 
@@ -191,7 +191,14 @@ def infer(image_path):
 
         return output
 
-    collected_text = []
+    relevant_classes = {
+        'banyak_barang_satuan',
+        'nama_barang',
+        'harga_satuan',
+    }
+    crop_max_det = int(os.environ.get("OCR_CROP_MAX_DET", "12"))
+    min_crop_area = int(os.environ.get("OCR_MIN_CROP_AREA", "80"))
+    candidate_boxes = []
 
     for box in result.boxes:
 
@@ -206,9 +213,29 @@ def infer(image_path):
 
         class_name = result.names[class_id]
 
+        if class_name not in relevant_classes:
+            continue
+
+        candidate_boxes.append({
+            'bbox': [x1, y1, x2, y2],
+            'confidence': confidence,
+            'class_name': class_name,
+        })
+
+    candidate_boxes.sort(key=lambda item: (
+        item['bbox'][1],
+        item['bbox'][0],
+    ))
+
+    for detected in candidate_boxes[:crop_max_det]:
+
+        x1, y1, x2, y2 = detected['bbox']
+        confidence = detected['confidence']
+        class_name = detected['class_name']
+
         crop = image[y1:y2, x1:x2]
 
-        if crop.size == 0:
+        if crop.size == 0 or crop.shape[0] * crop.shape[1] < min_crop_area:
             continue
 
         print(
@@ -223,8 +250,6 @@ def infer(image_path):
             line['text']
             for line in lines
         ])
-
-        collected_text.append(text)
 
         output['detections'].append({
             'bbox': [x1, y1, x2, y2],

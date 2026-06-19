@@ -2,15 +2,21 @@
 
 @section('content')
 
+@php
+    $isAdmin = Auth::user()->role === 'admin';
+@endphp
+
 <div class="container">
 
     <!-- HEADER -->
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h2 class="fw-bold">Data Barang</h2>
 
-        <a href="{{ route('barang.create') }}" class="btn btn-primary">
-            + Tambah Barang
-        </a>
+        @if($isAdmin)
+            <a href="{{ route('barang.create') }}" class="btn btn-primary">
+                + Tambah Barang
+            </a>
+        @endif
     </div>
 
     <!-- NOTIFIKASI -->
@@ -34,7 +40,9 @@
                         <th>Stok</th>
                         <th>Kategori</th>
                         <th>Harga</th>
-                        <th width="180">Aksi</th>
+                        @if($isAdmin)
+                            <th width="180">Aksi</th>
+                        @endif
                     </tr>
                 </thead>
 
@@ -74,35 +82,37 @@
                             Rp {{ number_format($barang->harga, 0, ',', '.') }}
                         </td>
 
-                        <!-- AKSI -->
-                        <td class="text-center">
+                        @if($isAdmin)
+                            <!-- AKSI -->
+                            <td class="text-center">
 
-                            <!-- EDIT -->
-                            <a href="{{ route('barang.edit', $barang->id) }}"
-                               class="btn btn-warning btn-sm">
-                               ✏️ Edit
-                            </a>
+                                <!-- EDIT -->
+                                <a href="{{ route('barang.edit', $barang->id) }}"
+                                   class="btn btn-warning btn-sm">
+                                   Edit
+                                </a>
 
-                            <!-- HAPUS -->
-                            <form action="{{ route('barang.destroy', $barang->id) }}"
-                                  method="POST"
-                                  style="display:inline-block;"
-                                  onsubmit="return confirm('Yakin ingin menghapus data ini?');">
+                                <!-- HAPUS -->
+                                <form action="{{ route('barang.destroy', $barang->id) }}"
+                                      method="POST"
+                                      style="display:inline-block;"
+                                      onsubmit="return confirm('Yakin ingin menghapus data ini?');">
 
-                                @csrf
-                                @method('DELETE')
+                                    @csrf
+                                    @method('DELETE')
 
-                                <button type="submit" class="btn btn-danger btn-sm">
-                                    🗑️ Hapus
-                                </button>
-                            </form>
+                                    <button type="submit" class="btn btn-danger btn-sm">
+                                        Hapus
+                                    </button>
+                                </form>
 
-                        </td>
+                            </td>
+                        @endif
                     </tr>
 
                 @empty
                     <tr>
-                        <td colspan="6" class="text-center text-muted">
+                        <td colspan="{{ $isAdmin ? 7 : 6 }}" class="text-center text-muted">
                             Belum ada data barang
                         </td>
                     </tr>
