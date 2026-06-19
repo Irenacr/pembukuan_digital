@@ -5,7 +5,6 @@
 <div class="container">
     <h2 class="mb-4 fw-bold">Scan Nota Transaksi</h2>
 
-```
 <div class="card border-0 shadow-sm">
     <div class="card-body p-4">
 
@@ -83,7 +82,6 @@
 
     </div>
 </div>
-```
 
 </div>
 

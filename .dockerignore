@@ -1,0 +1,13 @@
+.git
+.vscode
+node_modules
+vendor
+storage/logs/*.log
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/app/public/temp_nota/*
+ocr/__pycache__
+ocr_service/__pycache__
+*.pyc
+.env

@@ -8,10 +8,10 @@ use App\Models\Barang;
 use Illuminate\Http\Request;
 use App\Models\DetailTransaksi;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\Process\Process;
-use Symfony\Component\Process\Exception\ProcessFailedException;
 
 class TransaksiController extends Controller
 {
@@ -109,6 +109,12 @@ if (!empty($result['detections'])) {
 
     private function runNotaOcr(string $filePath): array
 {
+    $ocrServiceUrl = trim((string) env('OCR_SERVICE_URL', ''));
+
+    if ($ocrServiceUrl !== '') {
+        return $this->runRemoteNotaOcr($filePath, $ocrServiceUrl);
+    }
+
     $pythonCommand = $this->getPythonBinary();
     $scriptPath = base_path('ocr/scan_nota.py');
 
@@ -217,6 +223,45 @@ PY;
     return $result;
 }
 
+    private function runRemoteNotaOcr(string $filePath, string $ocrServiceUrl): array
+    {
+        $endpoint = rtrim($ocrServiceUrl, '/') . '/scan';
+
+        Log::info('OCR remote execution details', [
+            'endpoint' => $endpoint,
+            'file_path' => $filePath,
+            'file_exists' => file_exists($filePath),
+            'file_readable' => is_readable($filePath),
+        ]);
+
+        if (!file_exists($filePath) || !is_readable($filePath)) {
+            throw new \RuntimeException('File nota tidak bisa dibaca oleh Laravel.');
+        }
+
+        $response = Http::timeout(180)
+            ->attach('file', file_get_contents($filePath), basename($filePath))
+            ->post($endpoint);
+
+        Log::info('OCR remote process output', [
+            'successful' => $response->successful(),
+            'status' => $response->status(),
+            'body' => $response->body(),
+        ]);
+
+        if (!$response->successful()) {
+            $message = $response->json('detail') ?: $response->body();
+            throw new \RuntimeException('OCR service gagal: ' . $message);
+        }
+
+        $result = $response->json();
+
+        if (!is_array($result)) {
+            throw new \RuntimeException('OCR service memberi response JSON tidak valid.');
+        }
+
+        return $result;
+    }
+
     private function getPythonBinary(): string
     {
         $pythonBinary = env('PYTHON_BINARY');
@@ -247,6 +292,17 @@ PY;
 
     private function parseYoloDetections(array $detections): array
 {
+    usort($detections, function ($a, $b) {
+        $ay = $a['bbox'][1] ?? 0;
+        $by = $b['bbox'][1] ?? 0;
+
+        if (abs($ay - $by) > 12) {
+            return $ay <=> $by;
+        }
+
+        return ($a['bbox'][0] ?? 0) <=> ($b['bbox'][0] ?? 0);
+    });
+
     $qtys = [];
     $names = [];
     $prices = [];
@@ -296,6 +352,54 @@ PY;
 
     return $items;
 }
+
+    private function parseNotaTextToItems(string $text): array
+    {
+        $lines = preg_split('/\R+/', trim($text));
+        $items = [];
+
+        foreach ($lines as $line) {
+            $line = trim(preg_replace('/\s+/', ' ', $line));
+
+            if ($line === '') {
+                continue;
+            }
+
+            preg_match_all('/\d[\d.,]*/', $line, $matches);
+            $numbers = $matches[0] ?? [];
+
+            if (empty($numbers)) {
+                continue;
+            }
+
+            $jumlah = 1;
+            $harga = 0;
+
+            if (count($numbers) >= 2) {
+                $jumlah = max((int) preg_replace('/\D/', '', $numbers[0]), 1);
+                $harga = (int) preg_replace('/\D/', '', end($numbers));
+            } else {
+                $harga = (int) preg_replace('/\D/', '', $numbers[0]);
+            }
+
+            $name = trim(preg_replace('/\d[\d.,]*/', ' ', $line));
+            $name = trim(preg_replace('/[^\pL\s xX\-]/u', ' ', $name));
+            $name = trim(preg_replace('/\s+/', ' ', $name));
+
+            if ($name === '' || $harga <= 0) {
+                continue;
+            }
+
+            $items[] = [
+                'barang_id' => '',
+                'item_name' => $name,
+                'jumlah' => $jumlah,
+                'harga_jual' => $harga,
+            ];
+        }
+
+        return $items;
+    }
     private function mapOcrDetectedItems(array $ocrItems): array
     {
         $items = [];

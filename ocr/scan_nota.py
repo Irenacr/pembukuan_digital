@@ -5,6 +5,11 @@ import tempfile
 import traceback
 from pathlib import Path
 
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 
 def ensure_home_environment():
     print("STEP 1 - ENV READY", file=sys.stderr, flush=True)
@@ -33,6 +38,7 @@ print("LOCALAPPDATA=" + os.environ.get('LOCALAPPDATA', ''), file=sys.stderr)
 
 try:
     import torch
+    torch.set_num_threads(int(os.environ.get("OCR_TORCH_THREADS", "1")))
     print("TORCH OK", file=sys.stderr)
 except Exception as e:
     print("TORCH ERROR = " + str(e), file=sys.stderr)
@@ -62,6 +68,7 @@ def debug_import_error(exc):
 
 try:
     import cv2
+    cv2.setNumThreads(int(os.environ.get("OCR_CV2_THREADS", "1")))
     print("STEP 3 - CV2 OK", file=sys.stderr, flush=True)
 except Exception as exc:
     debug_import_error(exc)
@@ -152,7 +159,11 @@ def infer(image_path):
 
     results = model(
         str(image_path),
-        verbose=False
+        verbose=False,
+        imgsz=int(os.environ.get("OCR_YOLO_IMGSZ", "960")),
+        conf=float(os.environ.get("OCR_YOLO_CONF", "0.25")),
+        max_det=int(os.environ.get("OCR_YOLO_MAX_DET", "40")),
+        device=os.environ.get("OCR_YOLO_DEVICE", "cpu"),
     )
 
     print("STEP 14 - AFTER YOLO PREDICT", file=sys.stderr, flush=True)
