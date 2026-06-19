@@ -55,6 +55,17 @@ def env_bool(name, default=False):
     return value.strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
+def env_int(name, default):
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+def capped_env_int(name, default, minimum, maximum):
+    return max(minimum, min(maximum, env_int(name, default)))
+
+
 def debug_import_error(exc):
     print('=== OCR ENV DEBUG ===', file=sys.stderr, flush=True)
     print('sys.executable=' + sys.executable, file=sys.stderr, flush=True)
@@ -310,9 +321,9 @@ def _infer_locked(image_path):
     results = yolo_model(
         str(image_path),
         verbose=False,
-        imgsz=int(os.environ.get("OCR_YOLO_IMGSZ", "416")),
+        imgsz=capped_env_int("OCR_YOLO_IMGSZ", 384, 320, 416),
         conf=float(os.environ.get("OCR_YOLO_CONF", "0.25")),
-        max_det=int(os.environ.get("OCR_YOLO_MAX_DET", "10")),
+        max_det=capped_env_int("OCR_YOLO_MAX_DET", 8, 1, 10),
         device=os.environ.get("OCR_YOLO_DEVICE", "cpu"),
     )
 
@@ -349,9 +360,9 @@ def _infer_locked(image_path):
         ).split(",")
         if class_name.strip()
     }
-    crop_max_det = max(1, int(os.environ.get("OCR_CROP_MAX_DET", "6")))
-    min_crop_area = max(1, int(os.environ.get("OCR_MIN_CROP_AREA", "80")))
-    max_crop_pixels = max(min_crop_area, int(os.environ.get("OCR_MAX_CROP_PIXELS", "120000")))
+    crop_max_det = capped_env_int("OCR_CROP_MAX_DET", 5, 1, 6)
+    min_crop_area = max(1, env_int("OCR_MIN_CROP_AREA", 80))
+    max_crop_pixels = max(min_crop_area, capped_env_int("OCR_MAX_CROP_PIXELS", 90000, 20000, 120000))
     box_iou_threshold = float(os.environ.get("OCR_BOX_IOU_THRESHOLD", "0.35"))
     crop_padding = max(0, int(os.environ.get("OCR_CROP_PADDING", "2")))
     candidate_boxes = []

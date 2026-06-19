@@ -1,11 +1,13 @@
 import os
 import asyncio
+import json
 import logging
+import sys
 import tempfile
 import time
 from pathlib import Path
 
-import cv2
+from PIL import Image
 from fastapi import FastAPI, File, HTTPException, UploadFile
 
 
@@ -27,6 +29,10 @@ def env_int(name: str, default: int) -> int:
         return default
 
 
+def capped_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    return max(minimum, min(maximum, env_int(name, default)))
+
+
 def env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
 
@@ -40,61 +46,108 @@ scan_semaphore = asyncio.Semaphore(max(1, env_int("OCR_MAX_CONCURRENT_SCANS", 1)
 
 
 def resize_for_ocr(source_path: str) -> str:
-    max_dim = max(320, env_int("OCR_MAX_IMAGE_DIM", 736))
-    image = cv2.imread(source_path)
+    max_dim = capped_env_int("OCR_MAX_IMAGE_DIM", 640, 320, 736)
 
-    if image is None:
-        raise ValueError("File gambar tidak bisa dibaca.")
+    try:
+        image = Image.open(source_path)
+        image.load()
+    except Exception as exc:
+        raise ValueError("File gambar tidak bisa dibaca.") from exc
 
-    height, width = image.shape[:2]
+    image = image.convert("RGB")
+    width, height = image.size
     longest = max(height, width)
 
     if longest <= max_dim:
         return source_path
 
     scale = max_dim / longest
-    resized = cv2.resize(
-        image,
-        (int(width * scale), int(height * scale)),
-        interpolation=cv2.INTER_AREA,
-    )
+    resized = image.resize((int(width * scale), int(height * scale)), Image.Resampling.LANCZOS)
 
     resized_path = str(Path(source_path).with_suffix(".resized.jpg"))
-    cv2.imwrite(resized_path, resized, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+    resized.save(resized_path, format="JPEG", quality=85, optimize=True)
 
     return resized_path
 
 
-def warmup_models() -> None:
-    warmup_status.update({
-        "state": "loading",
-        "error": None,
-        "started_at": time.time(),
-        "finished_at": None,
+def build_ocr_env() -> dict:
+    child_env = os.environ.copy()
+    child_env.update({
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "1",
+        "NUMEXPR_NUM_THREADS": "1",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "OCR_LOW_MEMORY_MODE": "true",
+        "OCR_RELEASE_OCR_AFTER_SCAN": "true",
+        "OCR_MAX_IMAGE_DIM": str(capped_env_int("OCR_MAX_IMAGE_DIM", 640, 320, 736)),
+        "OCR_YOLO_IMGSZ": str(capped_env_int("OCR_YOLO_IMGSZ", 384, 320, 416)),
+        "OCR_YOLO_MAX_DET": str(capped_env_int("OCR_YOLO_MAX_DET", 8, 1, 10)),
+        "OCR_CROP_MAX_DET": str(capped_env_int("OCR_CROP_MAX_DET", 5, 1, 6)),
+        "OCR_MAX_CROP_PIXELS": str(capped_env_int("OCR_MAX_CROP_PIXELS", 90000, 20000, 120000)),
+        "OCR_TORCH_THREADS": "1",
+        "OCR_CV2_THREADS": "1",
     })
 
-    try:
-        from ocr.scan_nota import ensure_models_loaded
+    return child_env
 
-        ensure_models_loaded()
-        warmup_status.update({
-            "state": "ready",
-            "error": None,
-            "finished_at": time.time(),
+
+def run_ocr_subprocess(image_path: str, timeout: int) -> dict:
+    import subprocess
+
+    try:
+        process = subprocess.run(
+            [sys.executable, "-m", "ocr.scan_nota", image_path],
+            cwd=str(Path(__file__).resolve().parents[1]),
+            env=build_ocr_env(),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError("OCR subprocess melewati batas waktu.") from exc
+
+    if process.returncode != 0:
+        logger.error("OCR subprocess failed", extra={
+            "returncode": process.returncode,
+            "stderr": process.stderr[-2000:],
         })
-    except Exception as exc:
-        logger.exception("OCR model warmup failed")
-        warmup_status.update({
-            "state": "failed",
-            "error": str(exc),
-            "finished_at": time.time(),
+
+        if process.returncode in {-9, 137}:
+            raise MemoryError("OCR subprocess kehabisan memori.")
+
+        raise RuntimeError(process.stderr.strip() or process.stdout.strip() or "OCR subprocess gagal.")
+
+    stdout_lines = [line.strip() for line in process.stdout.splitlines() if line.strip()]
+    json_payload = stdout_lines[-1] if stdout_lines else ""
+
+    try:
+        result = json.loads(json_payload)
+    except json.JSONDecodeError as exc:
+        logger.error("OCR subprocess returned invalid JSON", extra={
+            "stdout": process.stdout[-2000:],
+            "stderr": process.stderr[-2000:],
         })
+        raise RuntimeError("OCR subprocess memberi JSON tidak valid.") from exc
+
+    if not isinstance(result, dict):
+        raise RuntimeError("OCR subprocess memberi response JSON tidak valid.")
+
+    return result
 
 
 @app.on_event("startup")
 async def startup() -> None:
-    if env_bool("OCR_WARMUP_ON_START", False):
-        asyncio.create_task(asyncio.to_thread(warmup_models))
+    if env_bool("OCR_WARMUP_ON_START", False) and not env_bool("OCR_LOW_MEMORY_MODE", True):
+        warmup_status.update({
+            "state": "disabled",
+            "error": "Warmup dimatikan untuk mencegah OOM di Railway low-memory mode.",
+            "started_at": None,
+            "finished_at": None,
+        })
 
 
 @app.get("/health")
@@ -117,7 +170,7 @@ async def scan(file: UploadFile = File(...)):
     if suffix not in {".jpg", ".jpeg", ".png"}:
         raise HTTPException(status_code=422, detail="Format file harus jpg, jpeg, atau png.")
 
-    max_upload_bytes = max(1, env_int("OCR_MAX_UPLOAD_MB", 4)) * 1024 * 1024
+    max_upload_bytes = capped_env_int("OCR_MAX_UPLOAD_MB", 3, 1, 4) * 1024 * 1024
     original_path = None
     image_path = None
 
@@ -142,9 +195,7 @@ async def scan(file: UploadFile = File(...)):
 
         image_path = resize_for_ocr(original_path)
 
-        scan_timeout = max(10, env_int("OCR_SCAN_TIMEOUT", 90))
-
-        from ocr.scan_nota import infer
+        scan_timeout = capped_env_int("OCR_SCAN_TIMEOUT", 75, 20, 90)
 
         try:
             await asyncio.wait_for(scan_semaphore.acquire(), timeout=1)
@@ -156,7 +207,7 @@ async def scan(file: UploadFile = File(...)):
 
         try:
             return await asyncio.wait_for(
-                asyncio.to_thread(infer, image_path),
+                asyncio.to_thread(run_ocr_subprocess, image_path, scan_timeout),
                 timeout=scan_timeout,
             )
         finally:
@@ -164,6 +215,11 @@ async def scan(file: UploadFile = File(...)):
     except HTTPException:
         raise
     except asyncio.TimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="OCR service melewati batas waktu internal. Coba ulangi dengan foto lebih kecil/jelas.",
+        ) from exc
+    except TimeoutError as exc:
         raise HTTPException(
             status_code=504,
             detail="OCR service melewati batas waktu internal. Coba ulangi dengan foto lebih kecil/jelas.",

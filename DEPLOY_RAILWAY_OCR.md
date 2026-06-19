@@ -27,17 +27,17 @@ Dengan pola ini, Laravel tidak menjalankan `torch`, `ultralytics`, dan RapidOCR 
    OCR_RELEASE_OCR_AFTER_SCAN=true
    OCR_WARMUP_ON_START=false
    OCR_MAX_CONCURRENT_SCANS=1
-   OCR_MAX_IMAGE_DIM=736
-   OCR_YOLO_IMGSZ=416
+   OCR_MAX_IMAGE_DIM=640
+   OCR_YOLO_IMGSZ=384
    OCR_YOLO_CONF=0.25
-   OCR_YOLO_MAX_DET=10
-   OCR_CROP_MAX_DET=6
+   OCR_YOLO_MAX_DET=8
+   OCR_CROP_MAX_DET=5
    OCR_CROP_PADDING=2
    OCR_ITEM_CLASSES=banyak_barang_satuan,harga_satuan,harga_total_perbarang,nama_barang,total_value
    OCR_MIN_CROP_AREA=80
-   OCR_MAX_CROP_PIXELS=120000
-   OCR_MAX_UPLOAD_MB=4
-   OCR_SCAN_TIMEOUT=90
+   OCR_MAX_CROP_PIXELS=90000
+   OCR_MAX_UPLOAD_MB=3
+   OCR_SCAN_TIMEOUT=75
    OCR_BOX_IOU_THRESHOLD=0.35
    OCR_YOLO_DEVICE=cpu
    OCR_TORCH_THREADS=1
@@ -109,6 +109,7 @@ Dengan pola ini, Laravel tidak menjalankan `torch`, `ultralytics`, dan RapidOCR 
 - Jangan kosongkan `OCR_SERVICE_URL` di production.
 - Jangan set `APP_DEBUG=true` di production.
 - Jika OCR masih OOM, naikkan memory OCR service atau turunkan `OCR_MAX_IMAGE_DIM`, `OCR_YOLO_IMGSZ`, `OCR_YOLO_MAX_DET`, dan `OCR_CROP_MAX_DET`.
+- FastAPI menjalankan OCR di subprocess supaya memori `torch`, YOLO, dan RapidOCR dilepas OS setelah scan selesai.
 - Jika gambar nota dari HP terlalu besar, OCR service otomatis resize maksimal sesuai `OCR_MAX_IMAGE_DIM`.
 - RapidOCR hanya memproses crop dari bounding box YOLO, bukan seluruh gambar nota.
 - `/health` tidak memuat model OCR, jadi Railway healthcheck tetap ringan.
